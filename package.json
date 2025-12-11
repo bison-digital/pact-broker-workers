@@ -1,0 +1,44 @@
+{
+  "name": "pact-broker-workers",
+  "version": "0.1.0",
+  "description": "A lightweight Pact Broker running on Cloudflare Workers with Durable Objects",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "cf-typegen": "wrangler types"
+  },
+  "keywords": [
+    "pact",
+    "pact-broker",
+    "contract-testing",
+    "cloudflare-workers",
+    "durable-objects",
+    "edge"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "drizzle-orm": "^0.38.0",
+    "hono": "^4.6.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.0",
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "@types/node": "^22.10.0",
+    "drizzle-kit": "^0.30.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.93.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

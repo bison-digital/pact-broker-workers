@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pact-broker-workers",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Durable Objects configuration
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PACT_BROKER",
+        "class_name": "PactBrokerDO"
+      }
+    ]
+  },
+
+  // Migrations for SQLite-backed Durable Objects
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PactBrokerDO"]
+    }
+  ],
+
+  // Environment variables (tokens set via wrangler secret or .dev.vars)
+  "vars": {
+    "ALLOW_PUBLIC_READ": "false"
+  },
+
+  // Development settings
+  "dev": {
+    "port": 9090
+  },
+
+  // Observability
+  "observability": {
+    "enabled": true
+  }
+}
