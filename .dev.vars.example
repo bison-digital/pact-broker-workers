@@ -1,0 +1,5 @@
+# Local development secrets
+# Copy this file and fill in your values
+
+# Bearer token for API authentication
+PACT_BROKER_TOKEN=local-dev-token

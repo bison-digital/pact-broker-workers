@@ -1,0 +1,176 @@
+import { Hono } from "hono";
+import type { Env, PacticipantResponse, VersionResponse, TagResponse } from "../types";
+import { HalBuilder, getBaseUrl } from "../services/hal";
+
+const app = new Hono<{ Bindings: Env }>();
+
+// Helper to get DO stub
+function getBroker(env: Env) {
+  const id = env.PACT_BROKER.idFromName("pact-broker");
+  return env.PACT_BROKER.get(id);
+}
+
+// List all pacticipants
+app.get("/", async (c) => {
+  const broker = getBroker(c.env);
+  const pacticipants = await broker.getAllPacticipants();
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+
+  const response = {
+    _links: {
+      self: hal.link("/pacticipants"),
+    },
+    _embedded: {
+      pacticipants: pacticipants.map((p) => ({
+        name: p.name,
+        createdAt: p.createdAt,
+        _links: hal.pacticipant(p.name),
+      })),
+    },
+  };
+
+  return c.json(response);
+});
+
+// Get a specific pacticipant
+app.get("/:name", async (c) => {
+  const name = c.req.param("name");
+  const broker = getBroker(c.env);
+  const pacticipant = await broker.getPacticipant(name);
+
+  if (!pacticipant) {
+    return c.json(
+      { error: "Not Found", message: `Pacticipant '${name}' not found` },
+      404
+    );
+  }
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: PacticipantResponse = {
+    name: pacticipant.name,
+    createdAt: pacticipant.createdAt,
+    _links: hal.pacticipant(pacticipant.name),
+  };
+
+  return c.json(response);
+});
+
+// List versions for a pacticipant
+app.get("/:name/versions", async (c) => {
+  const name = c.req.param("name");
+  const broker = getBroker(c.env);
+  const versions = await broker.getVersionsByPacticipant(name);
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+
+  const response = {
+    _links: {
+      self: hal.link(`/pacticipants/${encodeURIComponent(name)}/versions`),
+    },
+    _embedded: {
+      versions: versions.map((v) => ({
+        number: v.number,
+        branch: v.branch,
+        buildUrl: v.buildUrl,
+        createdAt: v.createdAt,
+        _links: hal.version(name, v.number),
+      })),
+    },
+  };
+
+  return c.json(response);
+});
+
+// Get a specific version
+app.get("/:name/versions/:version", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const broker = getBroker(c.env);
+  const version = await broker.getVersion(name, versionNumber);
+
+  if (!version) {
+    return c.json(
+      {
+        error: "Not Found",
+        message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
+      },
+      404
+    );
+  }
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: VersionResponse = {
+    number: version.number,
+    branch: version.branch,
+    buildUrl: version.buildUrl,
+    createdAt: version.createdAt,
+    _links: hal.version(name, version.number),
+  };
+
+  return c.json(response);
+});
+
+// Get tags for a version
+app.get("/:name/versions/:version/tags", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const broker = getBroker(c.env);
+  const versionTags = await broker.getTagsForVersion(name, versionNumber);
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+
+  const response = {
+    _links: {
+      self: hal.link(
+        `/pacticipants/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionNumber)}/tags`
+      ),
+    },
+    _embedded: {
+      tags: versionTags.map((t) => ({
+        name: t.name,
+        createdAt: t.createdAt,
+        _links: hal.tag(name, versionNumber, t.name),
+      })),
+    },
+  };
+
+  return c.json(response);
+});
+
+// Create/update a tag
+app.put("/:name/versions/:version/tags/:tag", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const tagName = c.req.param("tag");
+  const broker = getBroker(c.env);
+
+  // Ensure version exists first
+  const version = await broker.getVersion(name, versionNumber);
+  if (!version) {
+    return c.json(
+      {
+        error: "Not Found",
+        message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
+      },
+      404
+    );
+  }
+
+  const tag = await broker.addTag(name, versionNumber, tagName);
+
+  if (!tag) {
+    return c.json(
+      { error: "Internal Error", message: "Failed to create tag" },
+      500
+    );
+  }
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: TagResponse = {
+    name: tag.name,
+    createdAt: tag.createdAt,
+    _links: hal.tag(name, versionNumber, tag.name),
+  };
+
+  return c.json(response, 201);
+});
+
+export { app as pacticipantRoutes };
