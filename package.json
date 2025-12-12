@@ -32,10 +32,10 @@
     "@cloudflare/vitest-pool-workers": "^0.8.0",
     "@cloudflare/workers-types": "^4.20241205.0",
     "@types/node": "^22.10.0",
-    "drizzle-kit": "^0.30.0",
+    "drizzle-kit": "^0.31.0",
     "prettier": "^3.4.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0",
+    "vitest": "^2.1.9",
     "wrangler": "^3.93.0"
   },
   "engines": {
