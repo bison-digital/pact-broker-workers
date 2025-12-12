@@ -26,7 +26,7 @@ A lightweight, edge-native [Pact Broker](https://docs.pact.io/pact_broker) built
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/pact-broker-workers.git
+git clone https://github.com/bison-digital/pact-broker-workers.git
 cd pact-broker-workers
 
 # Install dependencies
