@@ -228,6 +228,39 @@ app.get("/latest", async (c) => {
 });
 
 // Pacts for verification - used by provider verifiers
+// GET is deprecated but still used by some clients
+app.get("/provider/:provider/for-verification", async (c) => {
+  const providerName = c.req.param("provider");
+
+  const broker = getBroker(c.env);
+  // GET uses default selectors (latest pacts)
+  const selectors = [{ latest: true }];
+  const results = await broker.getPactsForVerification(providerName, selectors);
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const pacts: PactForVerification[] = results.map(({ pact, consumer, version, notices }) => ({
+    verificationProperties: {
+      notices: notices.map((text) => ({
+        text: `This pact is being verified because ${text}`,
+        when: "before_verification",
+      })),
+      pending: false,
+    },
+    _links: {
+      self: {
+        href: `${hal.baseUrl}/pacts/provider/${encodeURIComponent(providerName)}/consumer/${encodeURIComponent(consumer.name)}/pact-version/${pact.contentSha}`,
+        name: `Pact between ${consumer.name} (${version.number}) and ${providerName}`,
+      },
+    },
+  }));
+
+  return c.json({
+    _embedded: { pacts },
+    _links: hal.pactsForVerification(providerName),
+  });
+});
+
+// POST allows custom selectors
 app.post("/provider/:provider/for-verification", async (c) => {
   const providerName = c.req.param("provider");
 
