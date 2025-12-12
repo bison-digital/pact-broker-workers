@@ -173,7 +173,7 @@ app.get(
       result.version
     );
 
-    return c.json(response);
+    return c.json(response, 200, { "Content-Type": "application/hal+json" });
   }
 );
 
@@ -277,6 +277,7 @@ app.get("/provider/:provider/for-verification", async (c) => {
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const pacts: PactForVerification[] = results.map(({ pact, consumer, version, notices }) => ({
+    shortDescription: `Pact between ${consumer.name} (${version.number}) and ${providerName}`,
     verificationProperties: {
       notices: notices.map((text) => ({
         text: `This pact is being verified because ${text}`,
@@ -292,10 +293,14 @@ app.get("/provider/:provider/for-verification", async (c) => {
     },
   }));
 
-  return c.json({
-    _embedded: { pacts },
-    _links: hal.pactsForVerification(providerName),
-  });
+  return c.json(
+    {
+      _embedded: { pacts },
+      _links: hal.pactsForVerification(providerName),
+    },
+    200,
+    { "Content-Type": "application/hal+json" }
+  );
 });
 
 // POST allows custom selectors
@@ -315,6 +320,7 @@ app.post("/provider/:provider/for-verification", async (c) => {
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const pacts: PactForVerification[] = results.map(({ pact, consumer, version, notices }) => ({
+    shortDescription: `Pact between ${consumer.name} (${version.number}) and ${providerName}`,
     verificationProperties: {
       notices: notices.map((text) => ({
         text: `This pact is being verified because ${text}`,
@@ -330,10 +336,14 @@ app.post("/provider/:provider/for-verification", async (c) => {
     },
   }));
 
-  return c.json({
-    _embedded: { pacts },
-    _links: hal.pactsForVerification(providerName),
-  });
+  return c.json(
+    {
+      _embedded: { pacts },
+      _links: hal.pactsForVerification(providerName),
+    },
+    200,
+    { "Content-Type": "application/hal+json" }
+  );
 });
 
 export { app as pactRoutes };

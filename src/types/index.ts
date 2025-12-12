@@ -159,6 +159,7 @@ export interface PactsForVerificationRequest {
 }
 
 export interface PactForVerification {
+  shortDescription: string;
   verificationProperties: {
     notices: Array<{ text: string; when: string }>;
     pending: boolean;
