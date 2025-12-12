@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Env, PacticipantResponse, VersionResponse, TagResponse } from "../types";
+import type { Env, PacticipantResponse, VersionResponse, TagResponse, DeploymentResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -200,6 +200,94 @@ app.put("/:name/versions/:version/tags/:tag", async (c) => {
   };
 
   return c.json(response, 201);
+});
+
+// Get deployments for a version
+app.get("/:name/versions/:version/deployed", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const broker = getBroker(c.env);
+  const deployments = await broker.getDeploymentsForVersion(name, versionNumber);
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+
+  const response = {
+    _links: {
+      self: hal.link(
+        `/pacticipants/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionNumber)}/deployed`
+      ),
+    },
+    _embedded: {
+      deployments: deployments.map(({ deployment, environment }) => ({
+        environment: environment.name,
+        deployedAt: deployment.deployedAt,
+        undeployedAt: deployment.undeployedAt,
+        _links: hal.deployment(name, versionNumber, environment.name),
+      })),
+    },
+  };
+
+  return c.json(response);
+});
+
+// Record a deployment
+app.put("/:name/versions/:version/deployed/:environment", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const environmentName = c.req.param("environment");
+  const broker = getBroker(c.env);
+
+  // Ensure version exists first
+  const version = await broker.getVersion(name, versionNumber);
+  if (!version) {
+    return c.json(
+      {
+        error: "Not Found",
+        message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
+      },
+      404
+    );
+  }
+
+  const deployment = await broker.recordDeployment(name, versionNumber, environmentName);
+
+  if (!deployment) {
+    return c.json(
+      { error: "Internal Error", message: "Failed to record deployment" },
+      500
+    );
+  }
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: DeploymentResponse = {
+    environment: environmentName,
+    deployedAt: deployment.deployedAt,
+    undeployedAt: deployment.undeployedAt,
+    _links: hal.deployment(name, versionNumber, environmentName),
+  };
+
+  return c.json(response, 201);
+});
+
+// Record an undeployment
+app.delete("/:name/versions/:version/deployed/:environment", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const environmentName = c.req.param("environment");
+  const broker = getBroker(c.env);
+
+  const success = await broker.recordUndeployment(name, versionNumber, environmentName);
+
+  if (!success) {
+    return c.json(
+      {
+        error: "Not Found",
+        message: `No active deployment found for version '${versionNumber}' in environment '${environmentName}'`,
+      },
+      404
+    );
+  }
+
+  return c.body(null, 204);
 });
 
 export { app as pacticipantRoutes };

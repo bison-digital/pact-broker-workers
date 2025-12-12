@@ -13,6 +13,7 @@ export const pacticipants = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     name: text("name").notNull().unique(),
+    mainBranch: text("main_branch").default("main"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(datetime('now'))`),
@@ -113,6 +114,47 @@ export const verifications = sqliteTable(
   ]
 );
 
+// Environments (e.g., "prod", "staging", "dev")
+export const environments = sqliteTable(
+  "environments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull().unique(),
+    displayName: text("display_name"),
+    production: integer("production", { mode: "boolean" }).default(false),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [index("environments_name_idx").on(table.name)]
+);
+
+// Deployed versions (tracks which versions are deployed to which environments)
+export const deployedVersions = sqliteTable(
+  "deployed_versions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    versionId: integer("version_id")
+      .notNull()
+      .references(() => versions.id, { onDelete: "cascade" }),
+    environmentId: integer("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    deployedAt: text("deployed_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    undeployedAt: text("undeployed_at"), // NULL = currently deployed
+  },
+  (table) => [
+    index("deployed_versions_env_idx").on(table.environmentId),
+    index("deployed_versions_version_idx").on(table.versionId),
+    uniqueIndex("deployed_versions_version_env_idx").on(
+      table.versionId,
+      table.environmentId
+    ),
+  ]
+);
+
 // Type exports for use in services
 export type Pacticipant = typeof pacticipants.$inferSelect;
 export type NewPacticipant = typeof pacticipants.$inferInsert;
@@ -128,3 +170,9 @@ export type NewPact = typeof pacts.$inferInsert;
 
 export type Verification = typeof verifications.$inferSelect;
 export type NewVerification = typeof verifications.$inferInsert;
+
+export type Environment = typeof environments.$inferSelect;
+export type NewEnvironment = typeof environments.$inferInsert;
+
+export type DeployedVersion = typeof deployedVersions.$inferSelect;
+export type NewDeployedVersion = typeof deployedVersions.$inferInsert;

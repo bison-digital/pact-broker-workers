@@ -4,7 +4,7 @@ import type { HalLinks, HalLink } from "../types";
  * Helper to build HAL _links for API responses
  */
 export class HalBuilder {
-  private baseUrl: string;
+  readonly baseUrl: string;
 
   constructor(baseUrl: string) {
     // Remove trailing slash
@@ -32,6 +32,12 @@ export class HalBuilder {
         "Latest pact by consumer/provider",
         true
       ),
+      "pb:provider-pacts-for-verification": this.link(
+        "/pacts/provider/{provider}/for-verification",
+        "Pact versions to verify for the specified provider",
+        true
+      ),
+      "pb:environments": this.link("/environments", "Environments"),
     };
   }
 
@@ -116,6 +122,32 @@ export class HalBuilder {
   canIDeploy(): HalLinks {
     return {
       self: this.link("/can-i-deploy"),
+    };
+  }
+
+  environment(name: string): HalLinks {
+    const n = encodeURIComponent(name);
+    return {
+      self: this.link(`/environments/${n}`),
+    };
+  }
+
+  deployment(pacticipant: string, version: string, environment: string): HalLinks {
+    const p = encodeURIComponent(pacticipant);
+    const v = encodeURIComponent(version);
+    const e = encodeURIComponent(environment);
+    return {
+      self: this.link(`/pacticipants/${p}/versions/${v}/deployed/${e}`),
+      "pb:version": this.link(`/pacticipants/${p}/versions/${v}`),
+      "pb:environment": this.link(`/environments/${e}`),
+    };
+  }
+
+  pactsForVerification(provider: string): HalLinks {
+    const pr = encodeURIComponent(provider);
+    return {
+      self: this.link(`/pacts/provider/${pr}/for-verification`),
+      "pb:provider": this.link(`/pacticipants/${pr}`),
     };
   }
 }
