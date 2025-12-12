@@ -135,6 +135,35 @@ app.get("/:name/versions/:version/tags", async (c) => {
   return c.json(response);
 });
 
+// Get a specific tag
+app.get("/:name/versions/:version/tags/:tag", async (c) => {
+  const name = c.req.param("name");
+  const versionNumber = c.req.param("version");
+  const tagName = c.req.param("tag");
+  const broker = getBroker(c.env);
+
+  const tag = await broker.getTag(name, versionNumber, tagName);
+
+  if (!tag) {
+    return c.json(
+      {
+        error: "Not Found",
+        message: `Tag '${tagName}' not found for version '${versionNumber}' of pacticipant '${name}'`,
+      },
+      404
+    );
+  }
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: TagResponse = {
+    name: tag.name,
+    createdAt: tag.createdAt,
+    _links: hal.tag(name, versionNumber, tag.name),
+  };
+
+  return c.json(response);
+});
+
 // Create/update a tag
 app.put("/:name/versions/:version/tags/:tag", async (c) => {
   const name = c.req.param("name");

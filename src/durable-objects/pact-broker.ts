@@ -437,6 +437,51 @@ export class PactBrokerDO extends DurableObject<Env> {
       .all();
   }
 
+  async getVerificationById(id: number): Promise<{
+    verification: Verification;
+    providerVersion: Version;
+    pact: Pact;
+  } | null> {
+    const verification = this.db
+      .select()
+      .from(verifications)
+      .where(eq(verifications.id, id))
+      .get();
+
+    if (!verification) return null;
+
+    const providerVersion = this.db
+      .select()
+      .from(versions)
+      .where(eq(versions.id, verification.providerVersionId))
+      .get();
+
+    const pact = this.db
+      .select()
+      .from(pacts)
+      .where(eq(pacts.id, verification.pactId))
+      .get();
+
+    if (!providerVersion || !pact) return null;
+
+    return { verification, providerVersion, pact };
+  }
+
+  async getTag(
+    pacticipantName: string,
+    versionNumber: string,
+    tagName: string
+  ): Promise<Tag | null> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return null;
+
+    return this.db
+      .select()
+      .from(tags)
+      .where(and(eq(tags.versionId, version.id), eq(tags.name, tagName)))
+      .get() ?? null;
+  }
+
   // ============ Matrix / Can-I-Deploy Operations ============
 
   async getMatrix(

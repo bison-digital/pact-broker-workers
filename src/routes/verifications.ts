@@ -10,6 +10,53 @@ function getBroker(env: Env) {
   return env.PACT_BROKER.get(id);
 }
 
+// Get a specific verification result
+app.get(
+  "/provider/:provider/consumer/:consumer/pact-version/:sha/verification-results/:id",
+  async (c) => {
+    const providerName = c.req.param("provider");
+    const consumerName = c.req.param("consumer");
+    const pactSha = c.req.param("sha");
+    const id = parseInt(c.req.param("id"), 10);
+
+    if (isNaN(id)) {
+      return c.json(
+        { error: "Bad Request", message: "Invalid verification ID" },
+        400
+      );
+    }
+
+    const broker = getBroker(c.env);
+    const result = await broker.getVerificationById(id);
+
+    if (!result) {
+      return c.json(
+        { error: "Not Found", message: `Verification '${id}' not found` },
+        404
+      );
+    }
+
+    // Verify the pact SHA matches
+    if (result.pact.contentSha !== pactSha) {
+      return c.json(
+        { error: "Not Found", message: `Verification '${id}' not found for pact '${pactSha}'` },
+        404
+      );
+    }
+
+    const hal = new HalBuilder(getBaseUrl(c.req.raw));
+    const response: VerificationResultResponse = {
+      success: result.verification.success,
+      providerApplicationVersion: result.providerVersion.number,
+      buildUrl: result.verification.buildUrl,
+      verifiedAt: result.verification.verifiedAt,
+      _links: hal.verification(providerName, consumerName, pactSha, result.verification.id),
+    };
+
+    return c.json(response);
+  }
+);
+
 // Publish verification results
 app.post(
   "/provider/:provider/consumer/:consumer/pact-version/:sha/verification-results",
