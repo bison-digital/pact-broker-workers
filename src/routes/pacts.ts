@@ -139,6 +139,44 @@ app.get(
   }
 );
 
+// Get pact by content SHA (used by verifiers fetching from for-verification links)
+app.get(
+  "/provider/:provider/consumer/:consumer/pact-version/:sha",
+  async (c) => {
+    const providerName = c.req.param("provider");
+    const consumerName = c.req.param("consumer");
+    const sha = c.req.param("sha");
+
+    const broker = getBroker(c.env);
+    const result = await broker.getPactByContentShaFull(
+      providerName,
+      consumerName,
+      sha
+    );
+
+    if (!result) {
+      return c.json(
+        {
+          error: "Not Found",
+          message: `Pact not found for provider '${providerName}', consumer '${consumerName}', sha '${sha}'`,
+        },
+        404
+      );
+    }
+
+    const hal = new HalBuilder(getBaseUrl(c.req.raw));
+    const response = buildPactResponse(
+      hal,
+      result.pact,
+      result.consumer,
+      result.provider,
+      result.version
+    );
+
+    return c.json(response);
+  }
+);
+
 // Get latest pact (optionally by tag)
 app.get("/provider/:provider/consumer/:consumer/latest/:tag?", async (c) => {
   const providerName = c.req.param("provider");

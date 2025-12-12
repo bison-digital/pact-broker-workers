@@ -399,6 +399,50 @@ export class PactBrokerDO extends DurableObject<Env> {
       .get();
   }
 
+  async getPactByContentShaFull(
+    providerName: string,
+    consumerName: string,
+    sha: string
+  ): Promise<{
+    pact: Pact;
+    consumer: Pacticipant;
+    provider: Pacticipant;
+    version: Version;
+  } | null> {
+    const consumer = await this.getPacticipant(consumerName);
+    const provider = await this.getPacticipant(providerName);
+    if (!consumer || !provider) return null;
+
+    const pact = this.db
+      .select()
+      .from(pacts)
+      .where(
+        and(
+          eq(pacts.contentSha, sha),
+          eq(pacts.providerId, provider.id)
+        )
+      )
+      .get();
+
+    if (!pact) return null;
+
+    // Get the version from the pact's consumerVersionId
+    const version = this.db
+      .select()
+      .from(versions)
+      .where(
+        and(
+          eq(versions.id, pact.consumerVersionId),
+          eq(versions.pacticipantId, consumer.id)
+        )
+      )
+      .get();
+
+    if (!version) return null;
+
+    return { pact, consumer, provider, version };
+  }
+
   // ============ Verification Operations ============
 
   async publishVerification(
