@@ -120,3 +120,56 @@ export interface ErrorResponse {
   error: string;
   message: string;
 }
+
+// Environment types
+export interface EnvironmentResponse extends HalResource {
+  name: string;
+  displayName?: string | null;
+  production: boolean;
+  createdAt: string;
+}
+
+export interface EnvironmentRequest {
+  displayName?: string;
+  production?: boolean;
+}
+
+// Deployment types
+export interface DeploymentResponse extends HalResource {
+  environment: string;
+  deployedAt: string;
+  undeployedAt?: string | null;
+}
+
+// Consumer version selectors for pacts-for-verification
+export interface ConsumerVersionSelector {
+  latest?: boolean;
+  tag?: string;
+  consumer?: string;
+  branch?: string;
+  mainBranch?: boolean;
+  deployed?: boolean;
+  environment?: string;
+}
+
+export interface PactsForVerificationRequest {
+  consumerVersionSelectors?: ConsumerVersionSelector[];
+  providerVersionBranch?: string;
+  includePendingStatus?: boolean;
+}
+
+export interface PactForVerification {
+  verificationProperties: {
+    notices: Array<{ text: string; when: string }>;
+    pending: boolean;
+  };
+  _links: {
+    self: { href: string; name: string };
+  };
+}
+
+export interface PactsForVerificationResponse extends HalResource {
+  _embedded: {
+    pacts: PactForVerification[];
+  };
+}

@@ -1,20 +1,24 @@
 import { DurableObject } from "cloudflare:workers";
 import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNull } from "drizzle-orm";
 import {
   pacticipants,
   versions,
   tags,
   pacts,
   verifications,
+  environments,
+  deployedVersions,
   type Pacticipant,
   type Version,
   type Tag,
   type Pact,
   type Verification,
+  type Environment,
+  type DeployedVersion,
 } from "../db/schema";
 import { runMigrations } from "../db/migrations";
-import type { Env, PactContent, MatrixRow } from "../types";
+import type { Env, PactContent, MatrixRow, ConsumerVersionSelector } from "../types";
 
 export class PactBrokerDO extends DurableObject<Env> {
   private db: DrizzleSqliteDODatabase;
@@ -608,6 +612,324 @@ export class PactBrokerDO extends DurableObject<Env> {
       reason: "All pacts verified successfully",
       matrix,
     };
+  }
+
+  // ============ Environment Operations ============
+
+  async getOrCreateEnvironment(
+    name: string,
+    displayName?: string,
+    production?: boolean
+  ): Promise<Environment> {
+    const existing = this.db
+      .select()
+      .from(environments)
+      .where(eq(environments.name, name))
+      .get();
+
+    if (existing) {
+      // Update if values provided
+      if (displayName !== undefined || production !== undefined) {
+        this.db
+          .update(environments)
+          .set({
+            ...(displayName !== undefined && { displayName }),
+            ...(production !== undefined && { production }),
+          })
+          .where(eq(environments.id, existing.id))
+          .run();
+        return {
+          ...existing,
+          displayName: displayName ?? existing.displayName,
+          production: production ?? existing.production,
+        };
+      }
+      return existing;
+    }
+
+    return this.db
+      .insert(environments)
+      .values({ name, displayName, production: production ?? false })
+      .returning()
+      .get();
+  }
+
+  async getEnvironment(name: string): Promise<Environment | undefined> {
+    return this.db
+      .select()
+      .from(environments)
+      .where(eq(environments.name, name))
+      .get();
+  }
+
+  async getAllEnvironments(): Promise<Environment[]> {
+    return this.db.select().from(environments).all();
+  }
+
+  // ============ Deployment Operations ============
+
+  async recordDeployment(
+    pacticipantName: string,
+    versionNumber: string,
+    environmentName: string
+  ): Promise<DeployedVersion | null> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return null;
+
+    const environment = await this.getOrCreateEnvironment(environmentName);
+
+    // Check if already deployed (and not undeployed)
+    const existing = this.db
+      .select()
+      .from(deployedVersions)
+      .where(
+        and(
+          eq(deployedVersions.versionId, version.id),
+          eq(deployedVersions.environmentId, environment.id),
+          isNull(deployedVersions.undeployedAt)
+        )
+      )
+      .get();
+
+    if (existing) return existing;
+
+    // If there was a previous deployment that was undeployed, create a new record
+    return this.db
+      .insert(deployedVersions)
+      .values({
+        versionId: version.id,
+        environmentId: environment.id,
+      })
+      .returning()
+      .get();
+  }
+
+  async recordUndeployment(
+    pacticipantName: string,
+    versionNumber: string,
+    environmentName: string
+  ): Promise<boolean> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return false;
+
+    const environment = await this.getEnvironment(environmentName);
+    if (!environment) return false;
+
+    // Check if there's an active deployment first
+    const existing = this.db
+      .select()
+      .from(deployedVersions)
+      .where(
+        and(
+          eq(deployedVersions.versionId, version.id),
+          eq(deployedVersions.environmentId, environment.id),
+          isNull(deployedVersions.undeployedAt)
+        )
+      )
+      .get();
+
+    if (!existing) return false;
+
+    this.db
+      .update(deployedVersions)
+      .set({ undeployedAt: new Date().toISOString().replace("T", " ").slice(0, 19) })
+      .where(eq(deployedVersions.id, existing.id))
+      .run();
+
+    return true;
+  }
+
+  async getDeploymentsForVersion(
+    pacticipantName: string,
+    versionNumber: string
+  ): Promise<Array<{ deployment: DeployedVersion; environment: Environment }>> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return [];
+
+    const results = this.db
+      .select({
+        deployment: deployedVersions,
+        environment: environments,
+      })
+      .from(deployedVersions)
+      .innerJoin(environments, eq(deployedVersions.environmentId, environments.id))
+      .where(eq(deployedVersions.versionId, version.id))
+      .all();
+
+    return results;
+  }
+
+  async isVersionDeployed(
+    pacticipantName: string,
+    versionNumber: string,
+    environmentName?: string
+  ): Promise<boolean> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return false;
+
+    if (environmentName) {
+      const environment = await this.getEnvironment(environmentName);
+      if (!environment) return false;
+
+      const deployment = this.db
+        .select()
+        .from(deployedVersions)
+        .where(
+          and(
+            eq(deployedVersions.versionId, version.id),
+            eq(deployedVersions.environmentId, environment.id),
+            isNull(deployedVersions.undeployedAt)
+          )
+        )
+        .get();
+
+      return !!deployment;
+    }
+
+    // Check if deployed to any environment
+    const deployment = this.db
+      .select()
+      .from(deployedVersions)
+      .where(
+        and(
+          eq(deployedVersions.versionId, version.id),
+          isNull(deployedVersions.undeployedAt)
+        )
+      )
+      .get();
+
+    return !!deployment;
+  }
+
+  // ============ Pacts For Verification ============
+
+  async getPactsForVerification(
+    providerName: string,
+    selectors: ConsumerVersionSelector[]
+  ): Promise<
+    Array<{
+      pact: Pact;
+      consumer: Pacticipant;
+      provider: Pacticipant;
+      version: Version;
+      notices: string[];
+    }>
+  > {
+    const provider = await this.getPacticipant(providerName);
+    if (!provider) return [];
+
+    // Start with all latest pacts for this provider
+    let results = await this.getLatestPactsForProvider(providerName);
+
+    // If no selectors, default to latest
+    if (!selectors || selectors.length === 0) {
+      return results.map((r) => ({
+        ...r,
+        notices: ["This pact is being verified because it is the latest pact"],
+      }));
+    }
+
+    const matchedPacts: Map<
+      number,
+      {
+        pact: Pact;
+        consumer: Pacticipant;
+        provider: Pacticipant;
+        version: Version;
+        notices: string[];
+      }
+    > = new Map();
+
+    for (const selector of selectors) {
+      let selectorResults = results;
+      const notices: string[] = [];
+
+      // Filter by consumer
+      if (selector.consumer) {
+        selectorResults = selectorResults.filter(
+          (r) => r.consumer.name === selector.consumer
+        );
+        notices.push(`consumer is ${selector.consumer}`);
+      }
+
+      // Filter by tag
+      if (selector.tag) {
+        const filteredByTag: typeof selectorResults = [];
+        for (const r of selectorResults) {
+          const versionTags = await this.getTagsForVersion(
+            r.consumer.name,
+            r.version.number
+          );
+          if (versionTags.some((t) => t.name === selector.tag)) {
+            filteredByTag.push(r);
+          }
+        }
+        selectorResults = filteredByTag;
+        notices.push(`version tagged with '${selector.tag}'`);
+      }
+
+      // Filter by branch
+      if (selector.branch) {
+        selectorResults = selectorResults.filter(
+          (r) => r.version.branch === selector.branch
+        );
+        notices.push(`version is on branch '${selector.branch}'`);
+      }
+
+      // Filter by mainBranch
+      if (selector.mainBranch) {
+        const filteredByMainBranch: typeof selectorResults = [];
+        for (const r of selectorResults) {
+          const consumer = await this.getPacticipant(r.consumer.name);
+          if (consumer && r.version.branch === consumer.mainBranch) {
+            filteredByMainBranch.push(r);
+          }
+        }
+        selectorResults = filteredByMainBranch;
+        notices.push("version is on the main branch");
+      }
+
+      // Filter by deployed
+      if (selector.deployed) {
+        const filteredByDeployed: typeof selectorResults = [];
+        for (const r of selectorResults) {
+          const isDeployed = await this.isVersionDeployed(
+            r.consumer.name,
+            r.version.number,
+            selector.environment
+          );
+          if (isDeployed) {
+            filteredByDeployed.push(r);
+          }
+        }
+        selectorResults = filteredByDeployed;
+        notices.push(
+          selector.environment
+            ? `version is deployed to '${selector.environment}'`
+            : "version is currently deployed"
+        );
+      }
+
+      // Latest selector just uses current results
+      if (selector.latest) {
+        notices.push("it is the latest pact");
+      }
+
+      // Add matched pacts with notices
+      for (const r of selectorResults) {
+        const existing = matchedPacts.get(r.pact.id);
+        if (existing) {
+          existing.notices.push(...notices);
+        } else {
+          matchedPacts.set(r.pact.id, {
+            ...r,
+            notices: notices.length > 0 ? notices : ["it matches the consumer version selectors"],
+          });
+        }
+      }
+    }
+
+    return Array.from(matchedPacts.values());
   }
 
   // ============ Utilities ============

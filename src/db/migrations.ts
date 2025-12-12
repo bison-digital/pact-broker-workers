@@ -53,15 +53,47 @@ const migrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS verifications_pact_id_idx ON verifications(pact_id)`,
   `CREATE INDEX IF NOT EXISTS verifications_provider_version_idx ON verifications(provider_version_id)`,
+
+  // v2: Add mainBranch to pacticipants, environments and deployed_versions tables
+  `ALTER TABLE pacticipants ADD COLUMN main_branch TEXT DEFAULT 'main'`,
+
+  `CREATE TABLE IF NOT EXISTS environments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    production INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS environments_name_idx ON environments(name)`,
+
+  `CREATE TABLE IF NOT EXISTS deployed_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_id INTEGER NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+    environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    deployed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    undeployed_at TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS deployed_versions_env_idx ON deployed_versions(environment_id)`,
+  `CREATE INDEX IF NOT EXISTS deployed_versions_version_idx ON deployed_versions(version_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS deployed_versions_version_env_idx ON deployed_versions(version_id, environment_id)`,
 ];
 
 /**
  * Run migrations on the Durable Object's SQLite database.
  * Called from the DO constructor - must be synchronous.
+ * ALTER TABLE statements may fail if column already exists - this is expected.
  */
 export function runMigrations(sql: SqlStorage): void {
   for (const migration of migrations) {
-    sql.exec(migration);
+    try {
+      sql.exec(migration);
+    } catch (e) {
+      // Ignore "duplicate column name" errors from ALTER TABLE
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
   }
 }
 

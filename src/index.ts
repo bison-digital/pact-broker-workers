@@ -8,6 +8,7 @@ import { pacticipantRoutes } from "./routes/pacticipants";
 import { pactRoutes } from "./routes/pacts";
 import { verificationRoutes } from "./routes/verifications";
 import { matrixRoutes } from "./routes/matrix";
+import { environmentRoutes } from "./routes/environments";
 
 // Re-export the Durable Object class
 export { PactBrokerDO } from "./durable-objects/pact-broker";
@@ -33,6 +34,7 @@ app.route("/", indexRoutes);
 app.route("/pacticipants", pacticipantRoutes);
 app.route("/pacts", pactRoutes);
 app.route("/pacts", verificationRoutes);
+app.route("/environments", environmentRoutes);
 app.route("/", matrixRoutes);
 
 // 404 handler

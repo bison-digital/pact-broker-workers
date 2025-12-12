@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Env, PactResponse, PactContent } from "../types";
+import type { Env, PactResponse, PactContent, PactsForVerificationRequest, PactForVerification } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -225,6 +225,44 @@ app.get("/latest", async (c) => {
   };
 
   return c.json(response);
+});
+
+// Pacts for verification - used by provider verifiers
+app.post("/provider/:provider/for-verification", async (c) => {
+  const providerName = c.req.param("provider");
+
+  let body: PactsForVerificationRequest = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // Empty body is valid - defaults to latest pacts
+  }
+
+  const broker = getBroker(c.env);
+  const selectors = body.consumerVersionSelectors || [{ latest: true }];
+  const results = await broker.getPactsForVerification(providerName, selectors);
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const pacts: PactForVerification[] = results.map(({ pact, consumer, version, notices }) => ({
+    verificationProperties: {
+      notices: notices.map((text) => ({
+        text: `This pact is being verified because ${text}`,
+        when: "before_verification",
+      })),
+      pending: false,
+    },
+    _links: {
+      self: {
+        href: `${hal.baseUrl}/pacts/provider/${encodeURIComponent(providerName)}/consumer/${encodeURIComponent(consumer.name)}/pact-version/${pact.contentSha}`,
+        name: `Pact between ${consumer.name} (${version.number}) and ${providerName}`,
+      },
+    },
+  }));
+
+  return c.json({
+    _embedded: { pacts },
+    _links: hal.pactsForVerification(providerName),
+  });
 });
 
 export { app as pactRoutes };
