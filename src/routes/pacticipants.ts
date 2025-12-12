@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env, PacticipantResponse, VersionResponse, TagResponse, DeploymentResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import { nameSchema, versionSchema, tagSchema, environmentNameSchema, validateParam } from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -34,13 +35,16 @@ app.get("/", async (c) => {
 
 // Get a specific pacticipant
 app.get("/:name", async (c) => {
-  const name = c.req.param("name");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
   const broker = getBroker(c.env);
   const pacticipant = await broker.getPacticipant(name);
 
   if (!pacticipant) {
     return c.json(
-      { error: "Not Found", message: `Pacticipant '${name}' not found` },
+      { error: "Not Found", message: "Pacticipant not found" },
       404
     );
   }
@@ -57,7 +61,10 @@ app.get("/:name", async (c) => {
 
 // List versions for a pacticipant
 app.get("/:name/versions", async (c) => {
-  const name = c.req.param("name");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
   const broker = getBroker(c.env);
   const versions = await broker.getVersionsByPacticipant(name);
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -82,8 +89,14 @@ app.get("/:name/versions", async (c) => {
 
 // Get a specific version
 app.get("/:name/versions/:version", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
   const broker = getBroker(c.env);
   const version = await broker.getVersion(name, versionNumber);
 
@@ -91,7 +104,7 @@ app.get("/:name/versions/:version", async (c) => {
     return c.json(
       {
         error: "Not Found",
-        message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
+        message: "Version not found",
       },
       404
     );
