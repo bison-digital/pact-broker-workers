@@ -1,239 +1,251 @@
 # pact-broker-workers
 
-A lightweight, edge-native [Pact Broker](https://docs.pact.io/pact_broker) built with [Hono](https://hono.dev), TypeScript, and [Cloudflare Durable Objects](https://developers.cloudflare.com/durable-objects/).
+A lightweight Pact Broker implementation for Cloudflare Workers using Durable Objects for persistent storage.
 
-## Features
+## Overview
 
-- Zero-latency SQLite storage via Durable Objects
-- HAL-style API responses compatible with `pact-broker-client`
+This project provides core Pact Broker functionality on Cloudflare's edge network. It uses a single SQLite-backed Durable Object for zero-latency data access and Drizzle ORM for type-safe queries.
+
+### Architecture
+
+```
+Cloudflare Worker
+├── Hono Router
+│   ├── Auth Middleware (Bearer token)
+│   └── API Routes
+│
+└── PactBrokerDO (Durable Object)
+    └── SQLite Database
+        ├── pacticipants
+        ├── versions
+        ├── tags
+        ├── pacts
+        └── verifications
+```
+
+### Features
+
+- SQLite storage via Durable Objects (zero network latency)
+- HAL-style API responses for `pact-broker-client` compatibility
 - Bearer token authentication
-- Core Pact Broker functionality:
-  - Publish and retrieve pacts
-  - Version and tag management
-  - Verification results
-  - Matrix queries
-  - Can-I-Deploy checks
+- Pact publishing and retrieval
+- Version tagging
+- Verification result tracking
+- Matrix queries and can-i-deploy checks
 
 ## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- pnpm (or npm/yarn)
-- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works!)
+- pnpm
+- Cloudflare account
 
 ### Local Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/bison-digital/pact-broker-workers.git
 cd pact-broker-workers
-
-# Install dependencies
 pnpm install
-
-# Create local secrets file
-cp .dev.vars.example .dev.vars
-# Edit .dev.vars and set your PACT_BROKER_TOKEN
-
-# Start the dev server
+cp .dev.vars.example .dev.vars  # Set PACT_BROKER_TOKEN
 pnpm dev
 ```
 
-### Deploy to Cloudflare
+### Deployment
 
 ```bash
-# Login to Cloudflare
 npx wrangler login
-
-# Set your auth token as a secret
 npx wrangler secret put PACT_BROKER_TOKEN
-
-# Deploy!
 pnpm deploy
 ```
 
 ## Configuration
 
-### Environment Variables
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PACT_BROKER_TOKEN` | Bearer token for authentication | Required |
+| `ALLOW_PUBLIC_READ` | Allow unauthenticated GET requests | `"false"` |
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `PACT_BROKER_TOKEN` | Bearer token for API authentication | Yes |
-| `ALLOW_PUBLIC_READ` | Set to `"true"` to allow unauthenticated GET requests | No (default: `"false"`) |
+## API Reference
 
-### wrangler.jsonc
+All endpoints require `Authorization: Bearer <token>` header unless `ALLOW_PUBLIC_READ=true`.
 
-The main configuration file. Key settings:
+### Authentication
 
-- `name`: Your worker name (appears in the URL)
-- `compatibility_date`: Cloudflare Workers compatibility date
-- `durable_objects.bindings`: DO binding configuration
+Requests without valid authentication return:
 
-## API Endpoints
-
-All endpoints require `Authorization: Bearer <token>` header (unless `ALLOW_PUBLIC_READ=true` for GET requests).
+```json
+{"error": "Unauthorized", "message": "Missing Authorization header"}
+```
 
 ### Pacts
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `PUT` | `/pacts/provider/{provider}/consumer/{consumer}/version/{version}` | Publish a pact |
-| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/latest` | Get latest pact |
-| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/latest/{tag}` | Get latest pact for tag |
-| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/version/{version}` | Get specific version |
-| `GET` | `/pacts/provider/{provider}/latest` | Get all latest pacts for provider |
-| `GET` | `/pacts/latest` | Get all latest pacts |
+#### Publish Pact
 
-### Pacticipants & Versions
+```
+PUT /pacts/provider/{provider}/consumer/{consumer}/version/{version}
+```
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/pacticipants` | List all pacticipants |
-| `GET` | `/pacticipants/{name}` | Get pacticipant details |
-| `GET` | `/pacticipants/{name}/versions` | List versions |
-| `GET` | `/pacticipants/{name}/versions/{version}` | Get version details |
-| `PUT` | `/pacticipants/{name}/versions/{version}/tags/{tag}` | Tag a version |
-| `GET` | `/pacticipants/{name}/versions/{version}/tags` | Get tags for version |
+Request body:
+```json
+{
+  "consumer": {"name": "string"},
+  "provider": {"name": "string"},
+  "interactions": [],
+  "metadata": {"pactSpecification": {"version": "2.0.0"}}
+}
+```
+
+Response `201 Created` / `200 OK`:
+```json
+{
+  "consumer": {"name": "string"},
+  "provider": {"name": "string"},
+  "consumerVersion": "string",
+  "contentSha": "string",
+  "createdAt": "string",
+  "interactions": [],
+  "_links": {}
+}
+```
+
+#### Retrieve Pacts
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /pacts/provider/{provider}/consumer/{consumer}/latest` | Latest pact |
+| `GET /pacts/provider/{provider}/consumer/{consumer}/latest/{tag}` | Latest pact for tag |
+| `GET /pacts/provider/{provider}/consumer/{consumer}/version/{version}` | Specific version |
+| `GET /pacts/provider/{provider}/latest` | All latest pacts for provider |
+| `GET /pacts/latest` | All latest pacts |
+
+### Pacticipants
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /pacticipants` | List all |
+| `GET /pacticipants/{name}` | Get one |
+| `GET /pacticipants/{name}/versions` | List versions |
+| `GET /pacticipants/{name}/versions/{version}` | Get version |
+
+### Tags
+
+```
+PUT /pacticipants/{name}/versions/{version}/tags/{tag}
+```
+
+Response `201 Created`:
+```json
+{
+  "name": "string",
+  "createdAt": "string",
+  "_links": {}
+}
+```
+
+```
+GET /pacticipants/{name}/versions/{version}/tags
+```
 
 ### Verifications
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/pacts/provider/{provider}/consumer/{consumer}/pact-version/{sha}/verification-results` | Publish verification |
+```
+POST /pacts/provider/{provider}/consumer/{consumer}/pact-version/{sha}/verification-results
+```
 
-### Matrix & Can-I-Deploy
+Request body:
+```json
+{
+  "success": true,
+  "providerApplicationVersion": "string",
+  "buildUrl": "string"
+}
+```
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/matrix?pacticipant={name}&version={version}` | Query verification matrix |
-| `GET` | `/can-i-deploy?pacticipant={name}&version={version}&to={tag}` | Check deployment safety |
+Response `201 Created`:
+```json
+{
+  "success": true,
+  "providerApplicationVersion": "string",
+  "buildUrl": "string",
+  "verifiedAt": "string",
+  "_links": {}
+}
+```
+
+### Matrix and Can-I-Deploy
+
+```
+GET /matrix?pacticipant={name}&version={version}
+GET /can-i-deploy?pacticipant={name}&version={version}&to={tag}
+```
+
+Response:
+```json
+{
+  "summary": {
+    "deployable": true,
+    "reason": "All pacts verified successfully"
+  },
+  "matrix": [
+    {
+      "consumer": {"name": "string", "version": "string"},
+      "provider": {"name": "string", "version": null},
+      "pactVersion": {"sha": "string"},
+      "verificationResult": {"success": true, "verifiedAt": "string"}
+    }
+  ],
+  "_links": {}
+}
+```
 
 ### Health
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check (no auth required) |
-| `GET` | `/` | Index with HAL links |
+```
+GET /health
+```
 
-## Usage Examples
+Response `200 OK`:
+```json
+{"status": "ok"}
+```
 
-### With pact-broker-client CLI
+No authentication required.
+
+## Usage with pact-broker-client
 
 ```bash
-# Publish a pact
+# Publish
 pact-broker publish ./pacts \
   --consumer-app-version 1.0.0 \
-  --broker-base-url https://your-worker.your-subdomain.workers.dev \
-  --broker-token YOUR_TOKEN
+  --broker-base-url https://your-worker.workers.dev \
+  --broker-token $TOKEN
 
-# Can I deploy?
+# Can I Deploy
 pact-broker can-i-deploy \
   --pacticipant my-consumer \
   --version 1.0.0 \
-  --to-environment production \
-  --broker-base-url https://your-worker.your-subdomain.workers.dev \
-  --broker-token YOUR_TOKEN
-```
-
-### With curl
-
-```bash
-# Set your broker URL and token
-BROKER_URL="http://localhost:9090"
-TOKEN="your-token"
-
-# Publish a pact
-curl -X PUT \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "consumer": {"name": "my-consumer"},
-    "provider": {"name": "my-provider"},
-    "interactions": [
-      {
-        "description": "a request for users",
-        "request": {"method": "GET", "path": "/users"},
-        "response": {"status": 200, "body": []}
-      }
-    ],
-    "metadata": {"pactSpecification": {"version": "2.0.0"}}
-  }' \
-  "$BROKER_URL/pacts/provider/my-provider/consumer/my-consumer/version/1.0.0"
-
-# Get latest pact
-curl -H "Authorization: Bearer $TOKEN" \
-  "$BROKER_URL/pacts/provider/my-provider/consumer/my-consumer/latest"
-
-# Tag a version
-curl -X PUT \
-  -H "Authorization: Bearer $TOKEN" \
-  "$BROKER_URL/pacticipants/my-consumer/versions/1.0.0/tags/main"
-
-# Publish verification result
-curl -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"success": true, "providerApplicationVersion": "2.0.0"}' \
-  "$BROKER_URL/pacts/provider/my-provider/consumer/my-consumer/pact-version/PACT_SHA/verification-results"
-
-# Can I deploy?
-curl -H "Authorization: Bearer $TOKEN" \
-  "$BROKER_URL/can-i-deploy?pacticipant=my-consumer&version=1.0.0"
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                   Cloudflare Worker                      │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │                  Hono Router                     │   │
-│  │  - Auth middleware (Bearer token)               │   │
-│  │  - API routes                                   │   │
-│  └─────────────────────────────────────────────────┘   │
-│                          │                              │
-│                          │ RPC                          │
-│                          ▼                              │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │           PactBrokerDO (Durable Object)         │   │
-│  │  ┌───────────────────────────────────────────┐  │   │
-│  │  │          SQLite (embedded)                │  │   │
-│  │  │  - pacticipants, versions, tags           │  │   │
-│  │  │  - pacts, verifications                   │  │   │
-│  │  └───────────────────────────────────────────┘  │   │
-│  │  Drizzle ORM for type-safe queries              │   │
-│  └─────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+  --to prod \
+  --broker-base-url https://your-worker.workers.dev \
+  --broker-token $TOKEN
 ```
 
 ## Development
 
 ```bash
-# Run type checks
-pnpm typecheck
-
-# Run tests
-pnpm test
-
-# Format code
-pnpm format
+pnpm dev        # Start dev server
+pnpm typecheck  # Type checking
+pnpm test       # Run tests
+pnpm format     # Format code
 ```
 
 ## Limitations
 
-This is a lightweight implementation focused on core functionality. Not yet implemented:
-
+Not implemented:
 - Webhooks
 - HAL Browser UI
-- Environments (use tags instead)
-- Branches (basic support via query param)
+- Environments (use tags)
 - Matrix badge endpoint
-- Pact verification webhook triggers
-
-## Contributing
-
-Contributions welcome! Please open an issue or PR.
 
 ## License
 
