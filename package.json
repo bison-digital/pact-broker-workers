@@ -1,17 +1,24 @@
 {
   "name": "pact-broker-workers",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A lightweight Pact Broker running on Cloudflare Workers with Durable Objects",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/render-wrangler-dev.mjs",
     "dev": "wrangler dev",
+    "predeploy": "node scripts/render-wrangler-dev.mjs",
     "deploy": "wrangler deploy",
     "test": "vitest",
-    "test:run": "vitest run",
+    "test:run": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings src",
     "format": "prettier --write \"src/**/*.ts\"",
-    "cf-typegen": "wrangler types"
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "cf-typegen": "wrangler types",
+    "terraform:init": "terraform -chdir=infra init -backend-config=backend.hcl",
+    "terraform:plan": "terraform -chdir=infra plan",
+    "terraform:apply": "terraform -chdir=infra apply"
   },
   "keywords": [
     "pact",
@@ -21,7 +28,10 @@
     "durable-objects",
     "edge"
   ],
-  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bison-digital/pact-broker-workers.git"
+  },
   "license": "MIT",
   "dependencies": {
     "drizzle-orm": "^0.38.0",
@@ -33,6 +43,7 @@
     "@cloudflare/workers-types": "^4.20241205.0",
     "@types/node": "^22.10.0",
     "drizzle-kit": "^0.30.0",
+    "oxlint": "^0.15.0",
     "prettier": "^3.4.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0",
