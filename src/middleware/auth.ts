@@ -10,9 +10,9 @@ function timingSafeEqual(a: string, b: string): boolean {
     // Still do a comparison to maintain constant time for same-length checks
     // but we'll return false regardless
     const dummy = "x".repeat(b.length);
-    let result = 0;
+    let _result = 0;
     for (let i = 0; i < dummy.length; i++) {
-      result |= dummy.charCodeAt(i) ^ b.charCodeAt(i);
+      _result |= dummy.charCodeAt(i) ^ b.charCodeAt(i);
     }
     return false;
   }
@@ -44,13 +44,15 @@ export const authMiddleware = createMiddleware<{ Bindings: Env }>(
 
     // Validate that PACT_BROKER_TOKEN is configured
     if (!c.env.PACT_BROKER_TOKEN || c.env.PACT_BROKER_TOKEN.length < 8) {
-      console.error("PACT_BROKER_TOKEN is not configured or too short (min 8 chars)");
+      console.error(
+        "PACT_BROKER_TOKEN is not configured or too short (min 8 chars)",
+      );
       return c.json(
         {
           error: "Internal Server Error",
           message: "Authentication not configured",
         },
-        500
+        500,
       );
     }
 
@@ -62,7 +64,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env }>(
           error: "Unauthorized",
           message: "Missing Authorization header",
         },
-        401
+        401,
       );
     }
 
@@ -72,9 +74,10 @@ export const authMiddleware = createMiddleware<{ Bindings: Env }>(
       return c.json(
         {
           error: "Unauthorized",
-          message: "Invalid Authorization header format. Expected: Bearer <token>",
+          message:
+            "Invalid Authorization header format. Expected: Bearer <token>",
         },
-        401
+        401,
       );
     }
 
@@ -85,10 +88,10 @@ export const authMiddleware = createMiddleware<{ Bindings: Env }>(
           error: "Unauthorized",
           message: "Invalid token",
         },
-        401
+        401,
       );
     }
 
     return next();
-  }
+  },
 );

@@ -24,7 +24,7 @@ app.get("/matrix", async (c) => {
         error: "Bad Request",
         message: "pacticipant query parameter is required",
       },
-      400
+      400,
     );
   }
 
@@ -32,14 +32,14 @@ app.get("/matrix", async (c) => {
   const matrix = await broker.getMatrix(
     pacticipant,
     version ?? undefined,
-    latestTag ?? undefined
+    latestTag ?? undefined,
   );
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: MatrixResponse = {
     summary: {
       deployable: matrix.every(
-        (row) => row.verificationResult?.success === true
+        (row) => row.verificationResult?.success === true,
       ),
       reason:
         matrix.length === 0
@@ -67,7 +67,7 @@ app.get("/can-i-deploy", async (c) => {
         error: "Bad Request",
         message: "pacticipant and version query parameters are required",
       },
-      400
+      400,
     );
   }
 
@@ -75,7 +75,7 @@ app.get("/can-i-deploy", async (c) => {
   const result = await broker.canIDeploy(
     pacticipant,
     version,
-    toTag ?? undefined
+    toTag ?? undefined,
   );
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));

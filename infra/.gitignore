@@ -1,0 +1,18 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Operator-local backend config
+backend.hcl
+
+# Sensitive tfvars — real secrets live in CI env vars or a private vault
+*.secrets.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

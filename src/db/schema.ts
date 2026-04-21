@@ -18,7 +18,7 @@ export const pacticipants = sqliteTable(
       .notNull()
       .default(sql`(datetime('now'))`),
   },
-  (table) => [index("pacticipants_name_idx").on(table.name)]
+  (table) => [index("pacticipants_name_idx").on(table.name)],
 );
 
 // Versions of pacticipants
@@ -39,10 +39,10 @@ export const versions = sqliteTable(
   (table) => [
     uniqueIndex("versions_pacticipant_number_idx").on(
       table.pacticipantId,
-      table.number
+      table.number,
     ),
     index("versions_pacticipant_id_idx").on(table.pacticipantId),
-  ]
+  ],
 );
 
 // Tags for versions (e.g., "prod", "main", "feature-x")
@@ -61,7 +61,7 @@ export const tags = sqliteTable(
   (table) => [
     uniqueIndex("tags_version_name_idx").on(table.versionId, table.name),
     index("tags_name_idx").on(table.name),
-  ]
+  ],
 );
 
 // Pacts (contracts between consumer and provider)
@@ -84,11 +84,11 @@ export const pacts = sqliteTable(
   (table) => [
     uniqueIndex("pacts_consumer_version_provider_idx").on(
       table.consumerVersionId,
-      table.providerId
+      table.providerId,
     ),
     index("pacts_provider_id_idx").on(table.providerId),
     index("pacts_content_sha_idx").on(table.contentSha),
-  ]
+  ],
 );
 
 // Verification results (provider verifying a pact)
@@ -111,7 +111,7 @@ export const verifications = sqliteTable(
   (table) => [
     index("verifications_pact_id_idx").on(table.pactId),
     index("verifications_provider_version_idx").on(table.providerVersionId),
-  ]
+  ],
 );
 
 // Environments (e.g., "prod", "staging", "dev")
@@ -126,7 +126,7 @@ export const environments = sqliteTable(
       .notNull()
       .default(sql`(datetime('now'))`),
   },
-  (table) => [index("environments_name_idx").on(table.name)]
+  (table) => [index("environments_name_idx").on(table.name)],
 );
 
 // Deployed versions (tracks which versions are deployed to which environments)
@@ -150,9 +150,9 @@ export const deployedVersions = sqliteTable(
     index("deployed_versions_version_idx").on(table.versionId),
     uniqueIndex("deployed_versions_version_env_idx").on(
       table.versionId,
-      table.environmentId
+      table.environmentId,
     ),
-  ]
+  ],
 );
 
 // Type exports for use in services

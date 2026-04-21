@@ -1,252 +1,174 @@
 # pact-broker-workers
 
-A lightweight Pact Broker implementation for Cloudflare Workers using Durable Objects for persistent storage.
+A lightweight, production-grade Pact Broker for Cloudflare Workers. SQLite-backed Durable Object for state; Hono + Drizzle for the API. HAL-compatible with `pact-broker-client` and the Pact standard toolchain.
 
 ## Overview
 
-This project provides core Pact Broker functionality on Cloudflare's edge network. It uses a single SQLite-backed Durable Object for zero-latency data access and Drizzle ORM for type-safe queries.
-
-### Architecture
-
 ```
-Cloudflare Worker
-├── Hono Router
-│   ├── Auth Middleware (Bearer token)
-│   └── API Routes
-│
-└── PactBrokerDO (Durable Object)
-    └── SQLite Database
-        ├── pacticipants
-        ├── versions
-        ├── tags
-        ├── pacts
-        └── verifications
+Cloudflare Worker (Hono + auth + CORS)
+  └── PactBrokerDO (Durable Object, SQLite)
+        ├── pacticipants / versions / tags
+        ├── pacts + verifications
+        ├── environments + deployed_versions
+        └── matrix / can-i-deploy / for-verification logic
 ```
 
 ### Features
 
-- SQLite storage via Durable Objects (zero network latency)
-- HAL-style API responses for `pact-broker-client` compatibility
-- Bearer token authentication
-- Pact publishing and retrieval
-- Version tagging
-- Verification result tracking
-- Matrix queries and can-i-deploy checks
+- HAL-style API responses compatible with `pact-broker-client`
+- Bearer-token auth (optional public-read mode)
+- Pact publish + retrieve (latest / tag / branch / version selectors)
+- Verification results and `pacts-for-verification`
+- Matrix, `can-i-deploy`, deployments/environments tracking
+- Zero external data store — all state in DO-local SQLite
+- Turnkey production deployment via Terraform + GitHub Actions
 
-## Quick Start
+### Not (yet) implemented
 
-### Prerequisites
+Webhooks, HAL Browser UI, matrix badge endpoint. See [`CHANGELOG.md`](CHANGELOG.md).
 
-- Node.js 18+
-- pnpm
-- Cloudflare account
-
-### Local Development
+## Quick start (local development)
 
 ```bash
 git clone https://github.com/bison-digital/pact-broker-workers.git
 cd pact-broker-workers
 pnpm install
-cp .dev.vars.example .dev.vars  # Set PACT_BROKER_TOKEN
-pnpm dev
+cp .dev.vars.example .dev.vars     # set PACT_BROKER_TOKEN
+pnpm run dev                       # auto-renders wrangler.jsonc + runs wrangler dev
 ```
 
-### Deployment
+Dev server listens on `http://localhost:9090`.
+
+## Production deployment
+
+Production deployment is driven by **Terraform** + **GitHub Actions**. The `infra/` directory is fully agnostic — every operator-specific value comes from environment variables (`TF_VAR_*` in `.envrc` for workstations, GH Actions env/secrets for CI). No HCL edits, no tfvars files.
+
+See [`infra/README.md`](infra/README.md) for the full walkthrough, including:
+
+- required GitHub Actions vars/secrets
+- the AWS Secrets Manager bootstrap command
+- plan/apply commands for workstation runs
+- the three GitHub Actions workflows (`ci.yml`, `deploy-staging.yml`, `deploy-production.yml`)
+
+The three workflows enforce a consistent shape:
+
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| `ci.yml` | PR | lint / test / type-check / `terraform plan` on staging |
+| `deploy-staging.yml` | push to `main` | auto-apply to staging, `/health` + authenticated smoke |
+| `deploy-production.yml` | manual dispatch | plan → required-reviewer gate → apply → smoke |
+
+## Forking for your organisation
+
+This repository is the **upstream** for the Pact Broker product. To run the broker in your organisation's Cloudflare account, fork this repo (keep `upstream` as a remote) and add only the operator-specific config that can't live upstream:
+
+1. **Fork** `bison-digital/pact-broker-workers` to your GitHub org. Keep this repo as `upstream`:
+
+   ```bash
+   git remote add upstream git@github.com:bison-digital/pact-broker-workers.git
+   ```
+
+2. **Populate your GitHub Environments** (`staging` and `production`) with the vars and secrets listed in [`infra/README.md`](infra/README.md#required-inputs). Repo-level secrets (AWS + Cloudflare credentials) go at repo scope; per-workspace values go at environment scope.
+
+3. **Seed your bearer token** in AWS Secrets Manager, once per workspace:
+
+   ```bash
+   aws secretsmanager create-secret \
+     --name "<your-secrets-prefix>/<workspace>/pact-broker-token" \
+     --secret-string "$(openssl rand -hex 32)" \
+     --recovery-window-in-days 0
+   ```
+
+4. **Create `infra/backend.hcl`** in your fork pointing at your S3 state bucket (see [`infra/backend.hcl.example`](infra/backend.hcl.example)). This file is gitignored — safe to commit on a private fork if you prefer, but not required.
+
+5. **Run CI.** Push a trivial change to a PR branch to verify `ci.yml` green-lights. Merge to `main` to deploy staging. Run `deploy-production.yml` manually when ready.
+
+### Staying in sync with upstream
 
 ```bash
-npx wrangler login
-npx wrangler secret put PACT_BROKER_TOKEN
-pnpm deploy
+git fetch upstream
+git merge upstream/main                    # latest
+# or:
+git merge upstream/v1.2.3                  # specific tagged release
 ```
 
-## Configuration
+Because `infra/` is agnostic, these merges should be clean. If you get a conflict in `infra/`, something committed downstream shouldn't be there — it belongs in `.envrc` or a GitHub Environment variable. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the convention.
+
+## Configuration reference
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `PACT_BROKER_TOKEN` | Bearer token for authentication | Required |
-| `ALLOW_PUBLIC_READ` | Allow unauthenticated GET requests | `"false"` |
+| --- | --- | --- |
+| `PACT_BROKER_TOKEN` | Bearer token. **Secret** — sourced from AWS Secrets Manager by Terraform, pushed to the Worker via `wrangler secret put`. | required |
+| `ALLOW_PUBLIC_READ` | If `"true"`, `GET`/`HEAD` requests bypass bearer auth. | `"false"` |
 
-## API Reference
+## API reference
 
-All endpoints require `Authorization: Bearer <token>` header unless `ALLOW_PUBLIC_READ=true`.
-
-### Authentication
-
-Requests without valid authentication return:
-
-```json
-{"error": "Unauthorized", "message": "Missing Authorization header"}
-```
+All endpoints require `Authorization: Bearer <token>` unless `ALLOW_PUBLIC_READ=true`. Except `/health`.
 
 ### Pacts
 
-#### Publish Pact
-
-```
-PUT /pacts/provider/{provider}/consumer/{consumer}/version/{version}
-```
-
-Request body:
-```json
-{
-  "consumer": {"name": "string"},
-  "provider": {"name": "string"},
-  "interactions": [],
-  "metadata": {"pactSpecification": {"version": "2.0.0"}}
-}
-```
-
-Response `201 Created` / `200 OK`:
-```json
-{
-  "consumer": {"name": "string"},
-  "provider": {"name": "string"},
-  "consumerVersion": "string",
-  "contentSha": "string",
-  "createdAt": "string",
-  "interactions": [],
-  "_links": {}
-}
-```
-
-#### Retrieve Pacts
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /pacts/provider/{provider}/consumer/{consumer}/latest` | Latest pact |
-| `GET /pacts/provider/{provider}/consumer/{consumer}/latest/{tag}` | Latest pact for tag |
-| `GET /pacts/provider/{provider}/consumer/{consumer}/version/{version}` | Specific version |
-| `GET /pacts/provider/{provider}/latest` | All latest pacts for provider |
-| `GET /pacts/latest` | All latest pacts |
-
-### Pacticipants
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /pacticipants` | List all |
-| `GET /pacticipants/{name}` | Get one |
-| `GET /pacticipants/{name}/versions` | List versions |
-| `GET /pacticipants/{name}/versions/{version}` | Get version |
-
-### Tags
-
-```
-PUT /pacticipants/{name}/versions/{version}/tags/{tag}
-```
-
-Response `201 Created`:
-```json
-{
-  "name": "string",
-  "createdAt": "string",
-  "_links": {}
-}
-```
-
-```
-GET /pacticipants/{name}/versions/{version}/tags
-```
+| Method | Path | Description |
+| --- | --- | --- |
+| `PUT` | `/pacts/provider/{provider}/consumer/{consumer}/version/{version}` | Publish |
+| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/latest` | Latest pact |
+| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/latest/{tag}` | Latest for tag |
+| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/version/{version}` | Specific version |
+| `GET` | `/pacts/provider/{provider}/consumer/{consumer}/pact-version/{sha}` | Fetch by content SHA |
+| `GET` | `/pacts/provider/{provider}/latest` | All latest for provider |
+| `GET` | `/pacts/latest` | All latest |
+| `GET` | `/pacts/provider/{provider}/for-verification` | Consumer selectors (branches, tags, deployed, mainBranch) |
 
 ### Verifications
 
-```
-POST /pacts/provider/{provider}/consumer/{consumer}/pact-version/{sha}/verification-results
-```
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/pacts/provider/{provider}/consumer/{consumer}/pact-version/{sha}/verification-results` | Publish verification result |
 
-Request body:
-```json
-{
-  "success": true,
-  "providerApplicationVersion": "string",
-  "buildUrl": "string"
-}
-```
+### Pacticipants, tags, environments
 
-Response `201 Created`:
-```json
-{
-  "success": true,
-  "providerApplicationVersion": "string",
-  "buildUrl": "string",
-  "verifiedAt": "string",
-  "_links": {}
-}
-```
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/pacticipants` | List |
+| `GET` | `/pacticipants/{name}` | Get one |
+| `GET` | `/pacticipants/{name}/versions` | List versions |
+| `GET` | `/pacticipants/{name}/versions/{version}` | Get version |
+| `PUT` | `/pacticipants/{name}/versions/{version}/tags/{tag}` | Add tag |
+| `GET` | `/pacticipants/{name}/versions/{version}/tags` | List tags |
+| `GET`/`PUT` | `/environments/{name}` | Manage environment |
 
-### Matrix and Can-I-Deploy
+### Matrix / can-i-deploy
 
-```
-GET /matrix?pacticipant={name}&version={version}
-GET /can-i-deploy?pacticipant={name}&version={version}&to={tag}
-```
-
-Response:
-```json
-{
-  "summary": {
-    "deployable": true,
-    "reason": "All pacts verified successfully"
-  },
-  "matrix": [
-    {
-      "consumer": {"name": "string", "version": "string"},
-      "provider": {"name": "string", "version": null},
-      "pactVersion": {"sha": "string"},
-      "verificationResult": {"success": true, "verifiedAt": "string"}
-    }
-  ],
-  "_links": {}
-}
-```
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/matrix?pacticipant={name}&version={version}` | Matrix query |
+| `GET` | `/can-i-deploy?pacticipant={name}&version={version}&to={tag}` | Deploy gate |
 
 ### Health
 
-```
-GET /health
-```
+| Method | Path | Auth |
+| --- | --- | --- |
+| `GET` | `/health` | none — returns `{"status":"ok"}` |
 
-Response `200 OK`:
-```json
-{"status": "ok"}
-```
-
-No authentication required.
-
-## Usage with pact-broker-client
+## Using with `pact-broker-client`
 
 ```bash
-# Publish
 pact-broker publish ./pacts \
   --consumer-app-version 1.0.0 \
-  --broker-base-url https://your-worker.workers.dev \
-  --broker-token $TOKEN
+  --broker-base-url https://your-broker-domain.com \
+  --broker-token $PACT_BROKER_TOKEN
 
-# Can I Deploy
 pact-broker can-i-deploy \
   --pacticipant my-consumer \
   --version 1.0.0 \
   --to prod \
-  --broker-base-url https://your-worker.workers.dev \
-  --broker-token $TOKEN
+  --broker-base-url https://your-broker-domain.com \
+  --broker-token $PACT_BROKER_TOKEN
 ```
 
-## Development
+## Contributing
 
-```bash
-pnpm dev        # Start dev server
-pnpm typecheck  # Type checking
-pnpm test       # Run tests
-pnpm format     # Format code
-```
-
-## Limitations
-
-Not implemented:
-- Webhooks
-- HAL Browser UI
-- Environments (use tags)
-- Matrix badge endpoint
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Infra changes must keep `infra/` agnostic — no operator-specific strings in committed files.
 
 ## License
 
-MIT
+MIT. See [`LICENSE`](LICENSE).
