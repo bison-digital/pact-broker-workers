@@ -5,10 +5,10 @@
 ```bash
 pnpm install --frozen-lockfile
 pnpm run dev                  # renders wrangler.jsonc then runs wrangler dev
-pnpm run lint                 # eslint
-pnpm run format               # prettier write
-pnpm run format:check         # prettier check
-pnpm run typecheck            # tsc --noEmit
+pnpm run lint                 # oxlint (--deny-warnings)
+pnpm run format               # oxfmt write
+pnpm run format:check         # oxfmt check
+pnpm run type-check           # tsgo --noEmit
 pnpm run test:run             # vitest run (via @cloudflare/vitest-pool-workers)
 ```
 
@@ -37,12 +37,13 @@ Edit `wrangler.jsonc.tmpl` for any static config changes.
 
 ## Code style
 
-- **Lint**: `eslint`. Don't disable rules inline without a short comment on
-  why.
-- **Format**: `prettier`. Enforced via `format:check` in CI.
-- **Types**: `tsc --noEmit`. `strict: true` + `noUncheckedIndexedAccess` are
-  on by default; don't weaken them. Avoid `any` unless you've documented a
-  concrete reason in a single-line comment next to the cast.
+- **Lint**: `oxlint` with `--deny-warnings`. Config at `.oxlintrc.json`.
+  Don't disable rules inline without a short comment on why.
+- **Format**: `oxfmt`. Enforced via `format:check` in CI.
+- **Types**: `tsgo --noEmit` (TypeScript's native-speed compiler, installed
+  as `@typescript/native-preview`). `strict: true` + `noUncheckedIndexedAccess`
+  are on by default; don't weaken them. Avoid `any` unless you've documented
+  a concrete reason in a single-line comment next to the cast.
 - **Comments**: prefer well-named code over explanatory comments. When a
   comment is warranted, it describes *why*, not *what*.
 - **Tests**: co-locate unit tests as `*.test.ts` beside the code they cover.
