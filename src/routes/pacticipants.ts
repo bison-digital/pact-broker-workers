@@ -1,5 +1,11 @@
 import { Hono } from "hono";
-import type { Env, PacticipantResponse, VersionResponse, TagResponse, DeploymentResponse } from "../types";
+import type {
+  Env,
+  PacticipantResponse,
+  VersionResponse,
+  TagResponse,
+  DeploymentResponse,
+} from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -41,7 +47,7 @@ app.get("/:name", async (c) => {
   if (!pacticipant) {
     return c.json(
       { error: "Not Found", message: `Pacticipant '${name}' not found` },
-      404
+      404,
     );
   }
 
@@ -93,7 +99,7 @@ app.get("/:name/versions/:version", async (c) => {
         error: "Not Found",
         message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
       },
-      404
+      404,
     );
   }
 
@@ -120,7 +126,7 @@ app.get("/:name/versions/:version/tags", async (c) => {
   const response = {
     _links: {
       self: hal.link(
-        `/pacticipants/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionNumber)}/tags`
+        `/pacticipants/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionNumber)}/tags`,
       ),
     },
     _embedded: {
@@ -150,7 +156,7 @@ app.get("/:name/versions/:version/tags/:tag", async (c) => {
         error: "Not Found",
         message: `Tag '${tagName}' not found for version '${versionNumber}' of pacticipant '${name}'`,
       },
-      404
+      404,
     );
   }
 
@@ -179,7 +185,7 @@ app.put("/:name/versions/:version/tags/:tag", async (c) => {
         error: "Not Found",
         message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
       },
-      404
+      404,
     );
   }
 
@@ -188,7 +194,7 @@ app.put("/:name/versions/:version/tags/:tag", async (c) => {
   if (!tag) {
     return c.json(
       { error: "Internal Error", message: "Failed to create tag" },
-      500
+      500,
     );
   }
 
@@ -207,13 +213,16 @@ app.get("/:name/versions/:version/deployed", async (c) => {
   const name = c.req.param("name");
   const versionNumber = c.req.param("version");
   const broker = getBroker(c.env);
-  const deployments = await broker.getDeploymentsForVersion(name, versionNumber);
+  const deployments = await broker.getDeploymentsForVersion(
+    name,
+    versionNumber,
+  );
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
 
   const response = {
     _links: {
       self: hal.link(
-        `/pacticipants/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionNumber)}/deployed`
+        `/pacticipants/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionNumber)}/deployed`,
       ),
     },
     _embedded: {
@@ -244,16 +253,20 @@ app.put("/:name/versions/:version/deployed/:environment", async (c) => {
         error: "Not Found",
         message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
       },
-      404
+      404,
     );
   }
 
-  const deployment = await broker.recordDeployment(name, versionNumber, environmentName);
+  const deployment = await broker.recordDeployment(
+    name,
+    versionNumber,
+    environmentName,
+  );
 
   if (!deployment) {
     return c.json(
       { error: "Internal Error", message: "Failed to record deployment" },
-      500
+      500,
     );
   }
 
@@ -275,7 +288,11 @@ app.delete("/:name/versions/:version/deployed/:environment", async (c) => {
   const environmentName = c.req.param("environment");
   const broker = getBroker(c.env);
 
-  const success = await broker.recordUndeployment(name, versionNumber, environmentName);
+  const success = await broker.recordUndeployment(
+    name,
+    versionNumber,
+    environmentName,
+  );
 
   if (!success) {
     return c.json(
@@ -283,7 +300,7 @@ app.delete("/:name/versions/:version/deployed/:environment", async (c) => {
         error: "Not Found",
         message: `No active deployment found for version '${versionNumber}' in environment '${environmentName}'`,
       },
-      404
+      404,
     );
   }
 

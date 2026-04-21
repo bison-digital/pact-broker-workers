@@ -101,7 +101,7 @@ export function runMigrations(sql: SqlStorage): void {
  * Alternative: Run migrations using Drizzle (for if we need more complex migrations)
  */
 export async function runMigrationsDrizzle(
-  db: SqliteRemoteDatabase
+  db: SqliteRemoteDatabase,
 ): Promise<void> {
   for (const migration of migrations) {
     await db.run(migration as unknown as Parameters<typeof db.run>[0]);

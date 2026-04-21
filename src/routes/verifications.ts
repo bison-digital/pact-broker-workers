@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import type { Env, VerificationResultRequest, VerificationResultResponse } from "../types";
+import type {
+  Env,
+  VerificationResultRequest,
+  VerificationResultResponse,
+} from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -22,7 +26,7 @@ app.get(
     if (isNaN(id)) {
       return c.json(
         { error: "Bad Request", message: "Invalid verification ID" },
-        400
+        400,
       );
     }
 
@@ -32,15 +36,18 @@ app.get(
     if (!result) {
       return c.json(
         { error: "Not Found", message: `Verification '${id}' not found` },
-        404
+        404,
       );
     }
 
     // Verify the pact SHA matches
     if (result.pact.contentSha !== pactSha) {
       return c.json(
-        { error: "Not Found", message: `Verification '${id}' not found for pact '${pactSha}'` },
-        404
+        {
+          error: "Not Found",
+          message: `Verification '${id}' not found for pact '${pactSha}'`,
+        },
+        404,
       );
     }
 
@@ -50,11 +57,16 @@ app.get(
       providerApplicationVersion: result.providerVersion.number,
       buildUrl: result.verification.buildUrl,
       verifiedAt: result.verification.verifiedAt,
-      _links: hal.verification(providerName, consumerName, pactSha, result.verification.id),
+      _links: hal.verification(
+        providerName,
+        consumerName,
+        pactSha,
+        result.verification.id,
+      ),
     };
 
     return c.json(response);
-  }
+  },
 );
 
 // Publish verification results
@@ -71,21 +83,27 @@ app.post(
     } catch {
       return c.json(
         { error: "Bad Request", message: "Invalid JSON body" },
-        400
+        400,
       );
     }
 
     if (typeof body.success !== "boolean") {
       return c.json(
-        { error: "Bad Request", message: "success field is required and must be boolean" },
-        400
+        {
+          error: "Bad Request",
+          message: "success field is required and must be boolean",
+        },
+        400,
       );
     }
 
     if (!body.providerApplicationVersion) {
       return c.json(
-        { error: "Bad Request", message: "providerApplicationVersion is required" },
-        400
+        {
+          error: "Bad Request",
+          message: "providerApplicationVersion is required",
+        },
+        400,
       );
     }
 
@@ -97,7 +115,7 @@ app.post(
       pactSha,
       body.providerApplicationVersion,
       body.success,
-      body.buildUrl
+      body.buildUrl,
     );
 
     if (!verification) {
@@ -106,7 +124,7 @@ app.post(
           error: "Not Found",
           message: `Pact with SHA '${pactSha}' not found`,
         },
-        404
+        404,
       );
     }
 
@@ -116,11 +134,16 @@ app.post(
       providerApplicationVersion: body.providerApplicationVersion,
       buildUrl: verification.buildUrl,
       verifiedAt: verification.verifiedAt,
-      _links: hal.verification(providerName, consumerName, pactSha, verification.id),
+      _links: hal.verification(
+        providerName,
+        consumerName,
+        pactSha,
+        verification.id,
+      ),
     };
 
     return c.json(response, 201);
-  }
+  },
 );
 
 export { app as verificationRoutes };
