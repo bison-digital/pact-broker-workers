@@ -58,6 +58,7 @@ All inputs come from environment variables. CI sets them via GitHub Actions vars
 
 | Var | TF var | Example |
 | --- | --- | --- |
+| `TF_WORKSPACE` | — (selects Terraform workspace) | `staging` or `dryrun` or `production` |
 | `DOMAIN` | `domain` | `pact-broker-staging.your-domain.com` |
 | `WORKER_NAME` | `worker_name` | `pact-broker-staging` |
 | `SECRETS_PREFIX` | `secrets_prefix` | `pact-broker` (or operator-specific like `cupa-pact-broker`) |
