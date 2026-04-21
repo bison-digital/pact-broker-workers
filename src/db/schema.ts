@@ -1,11 +1,5 @@
 import { sql } from "drizzle-orm";
-import {
-  sqliteTable,
-  text,
-  integer,
-  index,
-  uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Pacticipants (consumers and providers)
 export const pacticipants = sqliteTable(
@@ -37,10 +31,7 @@ export const versions = sqliteTable(
       .default(sql`(datetime('now'))`),
   },
   (table) => [
-    uniqueIndex("versions_pacticipant_number_idx").on(
-      table.pacticipantId,
-      table.number,
-    ),
+    uniqueIndex("versions_pacticipant_number_idx").on(table.pacticipantId, table.number),
     index("versions_pacticipant_id_idx").on(table.pacticipantId),
   ],
 );
@@ -148,10 +139,7 @@ export const deployedVersions = sqliteTable(
   (table) => [
     index("deployed_versions_env_idx").on(table.environmentId),
     index("deployed_versions_version_idx").on(table.versionId),
-    uniqueIndex("deployed_versions_version_env_idx").on(
-      table.versionId,
-      table.environmentId,
-    ),
+    uniqueIndex("deployed_versions_version_env_idx").on(table.versionId, table.environmentId),
   ],
 );
 

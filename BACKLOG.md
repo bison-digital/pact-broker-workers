@@ -30,14 +30,19 @@ Single bearer token. No scoped tokens, per-team isolation, or audit log of who p
 
 ## Test coverage
 
-### Vitest integration suite for the Pact API
-`@cloudflare/vitest-pool-workers` is wired in `vitest.config.ts` and CI runs `pnpm run test:run` — but no actual tests are written. The `--passWithNoTests` flag keeps CI green in the meantime. A production-quality suite would cover:
-- Happy-path publish / retrieve / tag / deploy flows
-- Consumer version selectors (latest, tag, branch, mainBranch, deployed)
-- `for-verification` selector matching
-- Matrix + `can-i-deploy` gating logic
-- 401/400/404 error paths
-- HAL-link shape regressions
+### Tier 1 suite (landed in v1.1.0)
+Integration + unit tests live under `test/` — auth middleware, input validation, core pact flow, matrix / can-i-deploy, for-verification selectors, HAL builder. 82 tests + 2 skipped. CI drops `--passWithNoTests`; failing tests now block merges.
+
+### Tier 2 follow-ups
+- **Env-toggle auth cases** — `ALLOW_PUBLIC_READ=true` happy path and `PACT_BROKER_TOKEN` too-short → 500. Mutating `env` from the test scope doesn't propagate into the Worker's env. Needs a separate vitest project (or a second config file) with its own `miniflare.bindings`. Two tests skipped in `test/auth.test.ts` with TODOs.
+- **Tags — deep behavior.** Add/remove tag idempotency, tag-on-nonexistent-version, tag name collisions.
+- **Verifications — edge cases.** Multiple verifications per pact, latest-verification selection, success-after-failure.
+- **Environments + deployments — in depth.** PUT/GET/DELETE env, deploy + undeploy, `isVersionDeployed`, cross-environment `deployed` selector.
+- **Selector combinations in `for-verification`.** Multiple selectors on one request, pending-flag handling, notices content assertions.
+- **Coverage reporting.** `--coverage` + GH job summary upload.
+
+### Durable-object state isolation note
+`@cloudflare/vitest-pool-workers` defaults to `isolatedStorage: true`, giving each test a fresh DO namespace. If a future test file needs to share state across tests (e.g. a large setup in `beforeAll`), scope state with unique pacticipant names (current pattern in `for-verification.test.ts`).
 
 ## Not goals (intentionally scoped out)
 
