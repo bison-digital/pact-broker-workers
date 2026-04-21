@@ -5,6 +5,13 @@ import type {
   VerificationResultResponse,
 } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import {
+  nameSchema,
+  shaSchema,
+  idSchema,
+  validateParam,
+  parseId,
+} from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -18,24 +25,39 @@ function getBroker(env: Env) {
 app.get(
   "/provider/:provider/consumer/:consumer/pact-version/:sha/verification-results/:id",
   async (c) => {
-    const providerName = c.req.param("provider");
-    const consumerName = c.req.param("consumer");
-    const pactSha = c.req.param("sha");
-    const id = parseInt(c.req.param("id"), 10);
+    // Validate URL parameters
+    const providerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("provider"),
+      "provider",
+    );
+    if (!providerResult.valid) return providerResult.response;
+    const providerName = providerResult.value;
 
-    if (isNaN(id)) {
-      return c.json(
-        { error: "Bad Request", message: "Invalid verification ID" },
-        400,
-      );
-    }
+    const consumerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("consumer"),
+      "consumer",
+    );
+    if (!consumerResult.valid) return consumerResult.response;
+    const consumerName = consumerResult.value;
+
+    const shaResult = validateParam(c, shaSchema, c.req.param("sha"), "sha");
+    if (!shaResult.valid) return shaResult.response;
+    const pactSha = shaResult.value;
+
+    const idResult = validateParam(c, idSchema, c.req.param("id"), "id");
+    if (!idResult.valid) return idResult.response;
+    const id = parseId(idResult.value);
 
     const broker = getBroker(c.env);
     const result = await broker.getVerificationById(id);
 
     if (!result) {
       return c.json(
-        { error: "Not Found", message: `Verification '${id}' not found` },
+        { error: "Not Found", message: "Verification not found" },
         404,
       );
     }
@@ -43,10 +65,7 @@ app.get(
     // Verify the pact SHA matches
     if (result.pact.contentSha !== pactSha) {
       return c.json(
-        {
-          error: "Not Found",
-          message: `Verification '${id}' not found for pact '${pactSha}'`,
-        },
+        { error: "Not Found", message: "Verification not found" },
         404,
       );
     }
@@ -73,9 +92,28 @@ app.get(
 app.post(
   "/provider/:provider/consumer/:consumer/pact-version/:sha/verification-results",
   async (c) => {
-    const providerName = c.req.param("provider");
-    const consumerName = c.req.param("consumer");
-    const pactSha = c.req.param("sha");
+    // Validate URL parameters
+    const providerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("provider"),
+      "provider",
+    );
+    if (!providerResult.valid) return providerResult.response;
+    const providerName = providerResult.value;
+
+    const consumerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("consumer"),
+      "consumer",
+    );
+    if (!consumerResult.valid) return consumerResult.response;
+    const consumerName = consumerResult.value;
+
+    const shaResult = validateParam(c, shaSchema, c.req.param("sha"), "sha");
+    if (!shaResult.valid) return shaResult.response;
+    const pactSha = shaResult.value;
 
     let body: VerificationResultRequest;
     try {
@@ -122,7 +160,7 @@ app.post(
       return c.json(
         {
           error: "Not Found",
-          message: `Pact with SHA '${pactSha}' not found`,
+          message: "Pact not found",
         },
         404,
       );

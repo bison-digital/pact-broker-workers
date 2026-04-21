@@ -7,6 +7,14 @@ import type {
   PactForVerification,
 } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import {
+  nameSchema,
+  versionSchema,
+  shaSchema,
+  branchSchema,
+  tagSchema,
+  validateParam,
+} from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -47,9 +55,45 @@ function buildPactResponse(
 app.put(
   "/provider/:provider/consumer/:consumer/version/:version",
   async (c) => {
-    const providerName = c.req.param("provider");
-    const consumerName = c.req.param("consumer");
-    const consumerVersion = c.req.param("version");
+    // Validate URL parameters
+    const providerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("provider"),
+      "provider",
+    );
+    if (!providerResult.valid) return providerResult.response;
+    const providerName = providerResult.value;
+
+    const consumerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("consumer"),
+      "consumer",
+    );
+    if (!consumerResult.valid) return consumerResult.response;
+    const consumerName = consumerResult.value;
+
+    const versionResult = validateParam(
+      c,
+      versionSchema,
+      c.req.param("version"),
+      "version",
+    );
+    if (!versionResult.valid) return versionResult.response;
+    const consumerVersion = versionResult.value;
+
+    // Validate optional branch query param
+    const branchParam = c.req.query("branch");
+    if (branchParam) {
+      const branchResult = validateParam(
+        c,
+        branchSchema,
+        branchParam,
+        "branch",
+      );
+      if (!branchResult.valid) return branchResult.response;
+    }
 
     let body: PactContent;
     try {
@@ -119,9 +163,33 @@ app.put(
 app.get(
   "/provider/:provider/consumer/:consumer/version/:version",
   async (c) => {
-    const providerName = c.req.param("provider");
-    const consumerName = c.req.param("consumer");
-    const consumerVersion = c.req.param("version");
+    // Validate URL parameters
+    const providerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("provider"),
+      "provider",
+    );
+    if (!providerResult.valid) return providerResult.response;
+    const providerName = providerResult.value;
+
+    const consumerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("consumer"),
+      "consumer",
+    );
+    if (!consumerResult.valid) return consumerResult.response;
+    const consumerName = consumerResult.value;
+
+    const versionResult = validateParam(
+      c,
+      versionSchema,
+      c.req.param("version"),
+      "version",
+    );
+    if (!versionResult.valid) return versionResult.response;
+    const consumerVersion = versionResult.value;
 
     const broker = getBroker(c.env);
     const result = await broker.getPact(
@@ -134,7 +202,7 @@ app.get(
       return c.json(
         {
           error: "Not Found",
-          message: `Pact not found for provider '${providerName}', consumer '${consumerName}', version '${consumerVersion}'`,
+          message: "Pact not found",
         },
         404,
       );
@@ -157,9 +225,28 @@ app.get(
 app.get(
   "/provider/:provider/consumer/:consumer/pact-version/:sha",
   async (c) => {
-    const providerName = c.req.param("provider");
-    const consumerName = c.req.param("consumer");
-    const sha = c.req.param("sha");
+    // Validate URL parameters
+    const providerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("provider"),
+      "provider",
+    );
+    if (!providerResult.valid) return providerResult.response;
+    const providerName = providerResult.value;
+
+    const consumerResult = validateParam(
+      c,
+      nameSchema,
+      c.req.param("consumer"),
+      "consumer",
+    );
+    if (!consumerResult.valid) return consumerResult.response;
+    const consumerName = consumerResult.value;
+
+    const shaResult = validateParam(c, shaSchema, c.req.param("sha"), "sha");
+    if (!shaResult.valid) return shaResult.response;
+    const sha = shaResult.value;
 
     const broker = getBroker(c.env);
     const result = await broker.getPactByContentShaFull(
@@ -172,7 +259,7 @@ app.get(
       return c.json(
         {
           error: "Not Found",
-          message: `Pact not found for provider '${providerName}', consumer '${consumerName}', sha '${sha}'`,
+          message: "Pact not found",
         },
         404,
       );
@@ -193,19 +280,42 @@ app.get(
 
 // Get latest pact (optionally by tag)
 app.get("/provider/:provider/consumer/:consumer/latest/:tag?", async (c) => {
-  const providerName = c.req.param("provider");
-  const consumerName = c.req.param("consumer");
-  const tag = c.req.param("tag");
+  // Validate URL parameters
+  const providerResult = validateParam(
+    c,
+    nameSchema,
+    c.req.param("provider"),
+    "provider",
+  );
+  if (!providerResult.valid) return providerResult.response;
+  const providerName = providerResult.value;
+
+  const consumerResult = validateParam(
+    c,
+    nameSchema,
+    c.req.param("consumer"),
+    "consumer",
+  );
+  if (!consumerResult.valid) return consumerResult.response;
+  const consumerName = consumerResult.value;
+
+  // Validate optional tag
+  const tagParam = c.req.param("tag");
+  let tag: string | undefined;
+  if (tagParam) {
+    const tagResult = validateParam(c, tagSchema, tagParam, "tag");
+    if (!tagResult.valid) return tagResult.response;
+    tag = tagResult.value;
+  }
 
   const broker = getBroker(c.env);
   const result = await broker.getLatestPact(providerName, consumerName, tag);
 
   if (!result) {
-    const tagMsg = tag ? ` with tag '${tag}'` : "";
     return c.json(
       {
         error: "Not Found",
-        message: `No pact found for provider '${providerName}' and consumer '${consumerName}'${tagMsg}`,
+        message: "Pact not found",
       },
       404,
     );
@@ -225,7 +335,15 @@ app.get("/provider/:provider/consumer/:consumer/latest/:tag?", async (c) => {
 
 // Get all latest pacts for a provider
 app.get("/provider/:provider/latest", async (c) => {
-  const providerName = c.req.param("provider");
+  // Validate URL parameters
+  const providerResult = validateParam(
+    c,
+    nameSchema,
+    c.req.param("provider"),
+    "provider",
+  );
+  if (!providerResult.valid) return providerResult.response;
+  const providerName = providerResult.value;
 
   const broker = getBroker(c.env);
   const pacts = await broker.getLatestPactsForProvider(providerName);
@@ -286,7 +404,15 @@ app.get("/latest", async (c) => {
 // Pacts for verification - used by provider verifiers
 // GET is deprecated but still used by some clients
 app.get("/provider/:provider/for-verification", async (c) => {
-  const providerName = c.req.param("provider");
+  // Validate URL parameters
+  const providerResult = validateParam(
+    c,
+    nameSchema,
+    c.req.param("provider"),
+    "provider",
+  );
+  if (!providerResult.valid) return providerResult.response;
+  const providerName = providerResult.value;
 
   const broker = getBroker(c.env);
   // GET uses default selectors (latest pacts)
@@ -325,7 +451,15 @@ app.get("/provider/:provider/for-verification", async (c) => {
 
 // POST allows custom selectors
 app.post("/provider/:provider/for-verification", async (c) => {
-  const providerName = c.req.param("provider");
+  // Validate URL parameters
+  const providerResult = validateParam(
+    c,
+    nameSchema,
+    c.req.param("provider"),
+    "provider",
+  );
+  if (!providerResult.valid) return providerResult.response;
+  const providerName = providerResult.value;
 
   let body: PactsForVerificationRequest = {};
   try {
