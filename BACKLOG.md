@@ -15,6 +15,31 @@ Not implemented. Browsing pacts/pacticipants requires the HAL API directly (`cur
 ### Matrix badge endpoint
 Not implemented. `GET /pacts/provider/{p}/consumer/{c}/badge` returns 404. Embed the `can-i-deploy` call in a README badge generator externally if needed.
 
+## Handover polish
+
+These came out of a pre-handover audit of the upstream repo. Not blockers, but worth clearing before the first customer reads the code.
+
+### CHANGELOG.md is stuck at v1.0.0
+The `v1.1.0` tag shipped without a matching CHANGELOG entry. Add a `1.1.0` section covering the vitest Tier 1 suite and the oxfmt/oxlint/tsgo migration. Keeps the release page coherent.
+
+### Stale `compatibility_date`
+`wrangler.jsonc.tmpl` pins `compatibility_date: "2024-12-01"`. Bump to a recent date (e.g. `"2026-04-01"`) and verify the broker still builds + tests pass. Nothing in the current code requires new Workers features, but a 16-month-stale date reads badly on handover.
+
+### Request body size limit
+No limit on `PUT /pacts/...` payloads. A leaked bearer token could write multi-MB pacts until the Durable Object fills. Add `hono/body-limit` middleware (suggest `maxSize: 1 MB` for pacts, keep GETs unbounded) and a test asserting 413 on oversize.
+
+### Rate limiting via Cloudflare ruleset
+Same failure mode as body-limit but from the other direction. Add a `cloudflare_ruleset` resource in `infra/main.tf` — something like "N requests per 10s per client IP" on mutating methods. Per-workspace so operators can tune. Not a Hono concern.
+
+### Dependabot
+No `.github/dependabot.yml`. Upstream product + MIT license + Cloudflare SDK churn means deps will rot silently. Add weekly updates for `npm`, `terraform`, and `github-actions`.
+
+### GitHub Actions Node-20 deprecation
+`actions/checkout@v4`, `actions/setup-node@v4`, `pnpm/action-setup@v4` all emit deprecation annotations (forced to Node 24 in June 2026). Bump to `@v5` where available. Touches all three workflow files.
+
+### Secret scanning posture
+Verify GitHub's native secret scanning is enabled on this public repo (Settings → Code security). If a downstream fork publishes pre-review, a stray `PACT_BROKER_TOKEN` in a commit would ship. Consider also a `gitleaks-action` run in CI as a second line.
+
 ## Operational gaps
 
 ### Durable Object SQLite snapshot / export
