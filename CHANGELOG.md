@@ -2,6 +2,36 @@
 
 All notable changes to `pact-broker-workers`.
 
+## 1.1.0 — 2026-04-21
+
+### Added
+
+- **Vitest Tier 1 suite** under `test/` — 82 tests + 2 tracked-as-skipped.
+  Covers: auth middleware (401 paths, scheme/whitespace/case), input
+  validation (Zod schemas + HTTP path-param integration), core pact flow
+  (publish / retrieve by version / latest / contentSha / tag, HAL shape),
+  `for-verification` consumer selectors (latest / tag / branch /
+  deployed), `/matrix` + `/can-i-deploy`, `HalBuilder`.
+- **`test/helpers.ts`** — `SELF.fetch()` wrapper and publish/tag/verify/
+  deploy helpers for integration tests.
+- **`pretest:run`** npm hook renders `wrangler.jsonc` so CI works from a
+  fresh checkout without a Terraform apply.
+- **`.oxlintrc.json`** categories config (correctness=error,
+  suspicious=warn, style/nursery/pedantic=off).
+
+### Changed
+
+- **Formatter**: prettier replaced with `oxfmt`.
+- **Type checker**: `tsc` replaced with `tsgo` via
+  `@typescript/native-preview`. `tsconfig.json` drops the deprecated
+  `baseUrl` and uses relative `paths`.
+- **Linter**: `oxlint` bumped `0.15` → `1.61`. Now runs with
+  `--deny-warnings`.
+- **CI**: workflows call `type-check` consistently; `--passWithNoTests`
+  removed from `test:run` (failing tests block merges).
+- `vitest.config.ts` sets `miniflare.bindings` so tests run without a
+  seeded AWS Secrets Manager.
+
 ## 1.0.0 — 2026-04-21
 
 First tagged release. Brings the broker to a production-grade, turnkey
