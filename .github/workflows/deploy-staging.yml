@@ -29,6 +29,10 @@ jobs:
   deploy:
     name: Deploy to Staging
     needs: checks
+    # Only runs on forks that have configured staging credentials. Set
+    # repo-level var `INFRA_DEPLOY_ENABLED=true` to enable. Upstream has
+    # no credentials to deploy with, so this is skipped there.
+    if: vars.INFRA_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: staging
     env:

@@ -44,6 +44,7 @@ All inputs come from environment variables. CI sets them via GitHub Actions vars
 | `AWS_REGION` | `aws_region` | `eu-west-1` |
 | `TERRAFORM_STATE_BUCKET` | `terraform_state_bucket` | `your-org-terraform-state` |
 | `CLOUDFLARE_ACCOUNT_ID` | `cloudflare_account_id` | 32-char hex |
+| `INFRA_DEPLOY_ENABLED` | — | Set to `"true"` to enable the plan/deploy jobs in this fork. Upstream keeps it unset so CI skips Terraform plans and deploys, which need operator credentials the upstream doesn't hold. |
 
 ### Repo-level GH Actions secrets
 

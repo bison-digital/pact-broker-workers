@@ -43,21 +43,42 @@ jobs:
           fi
           echo "OK — no routes block."
 
+  infra-validate:
+    name: Terraform fmt + validate
+    # Runs on every PR, no credentials required. Catches HCL breakage.
+    # The full `terraform plan` lives in infra-plan below and is
+    # conditional on a repo-level var that only downstream forks set
+    # (the upstream can't plan without operator-specific credentials).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.14.8"
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+        working-directory: infra
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false -input=false
+        working-directory: infra
+      - name: Terraform validate
+        run: terraform validate -no-color
+        working-directory: infra
+
   infra-plan:
     name: Terraform Plan (staging)
+    # Only runs on forks that have configured the `staging` GitHub
+    # Environment with AWS + Cloudflare credentials. Set the repo-level
+    # variable `INFRA_DEPLOY_ENABLED=true` to opt in. On the upstream
+    # agnostic repo, this is off by design — plans need operator
+    # credentials that upstream doesn't (and shouldn't) hold.
+    if: vars.INFRA_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
-    # Bind to the `staging` GitHub Environment so env-scoped vars/secrets
-    # (DOMAIN, WORKER_NAME, SECRETS_PREFIX, …) resolve. PR plan previews
-    # always target staging.
     environment: staging
     permissions:
       contents: read
       pull-requests: write
     env:
-      # Application-layer secrets are owned by AWS Secrets Manager and read
-      # at terraform apply time (see infra/secrets.tf); CI only needs AWS +
-      # Cloudflare auth. Per-workspace inputs come from GH Actions env
-      # `vars` — nothing operator-specific is committed in the repo.
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
@@ -77,20 +98,12 @@ jobs:
         with:
           terraform_version: "1.14.8"
 
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive
-        working-directory: infra
-
       - name: Terraform init
         run: |
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
             -backend-config="key=pact-broker-workers/terraform.tfstate" \
             -backend-config="region=${{ vars.AWS_REGION }}"
-        working-directory: infra
-
-      - name: Terraform validate
-        run: terraform validate -no-color
         working-directory: infra
 
       - name: Select staging workspace

@@ -27,6 +27,7 @@ jobs:
   plan:
     name: Terraform Plan (production)
     needs: checks
+    if: vars.INFRA_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     # Bind to `production` so env-scoped vars/secrets resolve. The plan
     # itself doesn't need the reviewer gate (it's read-only); the gate
@@ -96,6 +97,7 @@ jobs:
   apply:
     name: Terraform Apply (production)
     needs: plan
+    if: vars.INFRA_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production   # required-reviewer gate — approver reads the plan summary above
     env:
