@@ -46,7 +46,7 @@ app.use("*", async (c, next) => {
         error: "Payload Too Large",
         message: `Request body exceeds maximum size of ${MAX_BODY_SIZE} bytes`,
       },
-      413
+      413,
     );
   }
   return next();
@@ -64,7 +64,7 @@ app.use("*", async (c, next) => {
           error: "Unsupported Media Type",
           message: "Content-Type must be application/json",
         },
-        415
+        415,
       );
     }
   }
@@ -97,7 +97,7 @@ app.notFound((c) => {
       error: "Not Found",
       message: `Route ${c.req.method} ${c.req.path} not found`,
     },
-    404
+    404,
   );
 });
 
@@ -121,7 +121,7 @@ app.onError((err, c) => {
       message: "An unexpected error occurred",
       requestId,
     },
-    500
+    500,
   );
 });
 

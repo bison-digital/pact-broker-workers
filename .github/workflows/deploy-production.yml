@@ -1,0 +1,183 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Lint, Test, and Type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run test:run
+
+  plan:
+    name: Terraform Plan (production)
+    needs: checks
+    if: vars.INFRA_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # Bind to `production` so env-scoped vars/secrets resolve. The plan
+    # itself doesn't need the reviewer gate (it's read-only); the gate
+    # is on the `apply` job below.
+    environment: production
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
+      TF_VAR_domain: ${{ vars.DOMAIN }}
+      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
+      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.14.8"
+
+      - name: Terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=pact-broker-workers/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+        working-directory: infra
+
+      - name: Select production workspace
+        run: terraform workspace select -or-create production
+        working-directory: infra
+
+      - name: Terraform plan
+        run: terraform plan -no-color -input=false -out=tfplan | tee plan.txt
+        working-directory: infra
+
+      - name: Render plan to workflow summary
+        run: |
+          {
+            echo '## Terraform plan (production)'
+            echo ''
+            echo '```'
+            head -c 900000 infra/plan.txt
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload tfplan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-production
+          path: infra/tfplan
+          retention-days: 7
+          if-no-files-found: error
+
+  apply:
+    name: Terraform Apply (production)
+    needs: plan
+    if: vars.INFRA_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production   # required-reviewer gate — approver reads the plan summary above
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
+      TF_VAR_domain: ${{ vars.DOMAIN }}
+      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
+      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.14.8"
+
+      - name: Terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=pact-broker-workers/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+        working-directory: infra
+
+      - name: Select production workspace
+        run: terraform workspace select -or-create production
+        working-directory: infra
+
+      - name: Download tfplan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-production
+          path: infra
+
+      - name: Terraform apply
+        run: terraform apply -input=false tfplan
+        working-directory: infra
+
+      - name: Health check
+        env:
+          DOMAIN: ${{ vars.DOMAIN }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -sf "https://${DOMAIN}/health"; then
+              echo " Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+      - name: Authenticated smoke test
+        env:
+          DOMAIN: ${{ vars.DOMAIN }}
+          BROKER_TOKEN: ${{ secrets.SMOKE_TEST_BROKER_TOKEN }}
+        run: |
+          if [ -z "$BROKER_TOKEN" ]; then
+            echo "SMOKE_TEST_BROKER_TOKEN not set — skipping authenticated smoke test."
+            exit 0
+          fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $BROKER_TOKEN" \
+            "https://${DOMAIN}/pacticipants")
+          if [ "$status" != "200" ]; then
+            echo "Authenticated smoke test failed — got HTTP $status for GET /pacticipants"
+            exit 1
+          fi
+          echo "Authenticated smoke test passed (HTTP 200)"

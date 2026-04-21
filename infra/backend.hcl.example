@@ -1,0 +1,13 @@
+# Terraform S3 backend partial configuration for pact-broker-workers.
+#
+# Copy this file to `backend.hcl` (gitignored) and fill in your values, then
+# run from this directory:
+#
+#   terraform init -backend-config=backend.hcl
+#
+# Each operator maintains their own backend.hcl pointing at their own state
+# bucket.
+
+bucket = "your-org-terraform-state"         # S3 bucket you create yourself; native S3 locking is used (no DynamoDB needed)
+key    = "pact-broker-workers/terraform.tfstate"
+region = "eu-west-1"                        # the region your bucket lives in

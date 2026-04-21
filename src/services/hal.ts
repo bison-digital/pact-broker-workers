@@ -25,17 +25,17 @@ export class HalBuilder {
       "pb:pacticipants": this.link("/pacticipants", "Pacticipants"),
       "pb:latest-pact-versions": this.link(
         "/pacts/latest",
-        "Latest pact versions"
+        "Latest pact versions",
       ),
       "pb:pact": this.link(
         "/pacts/provider/{provider}/consumer/{consumer}/latest",
         "Latest pact by consumer/provider",
-        true
+        true,
       ),
       "pb:provider-pacts-for-verification": this.link(
         "/pacts/provider/{provider}/for-verification",
         "Pact versions to verify for the specified provider",
-        true
+        true,
       ),
       "pb:environments": this.link("/environments", "Environments"),
     };
@@ -46,7 +46,7 @@ export class HalBuilder {
       self: this.link(`/pacticipants/${encodeURIComponent(name)}`),
       "pb:versions": this.link(
         `/pacticipants/${encodeURIComponent(name)}/versions`,
-        "Versions"
+        "Versions",
       ),
     };
   }
@@ -75,7 +75,7 @@ export class HalBuilder {
     provider: string,
     consumer: string,
     version: string,
-    contentSha: string
+    contentSha: string,
   ): HalLinks {
     const pr = encodeURIComponent(provider);
     const co = encodeURIComponent(consumer);
@@ -87,10 +87,10 @@ export class HalBuilder {
       "pb:consumer-version": this.link(`/pacticipants/${co}/versions/${v}`),
       "pb:publish-verification-results": this.link(
         `/pacts/provider/${pr}/consumer/${co}/pact-version/${contentSha}/verification-results`,
-        "Publish verification results"
+        "Publish verification results",
       ),
       "pb:latest-pact-version": this.link(
-        `/pacts/provider/${pr}/consumer/${co}/latest`
+        `/pacts/provider/${pr}/consumer/${co}/latest`,
       ),
     };
   }
@@ -99,16 +99,16 @@ export class HalBuilder {
     provider: string,
     consumer: string,
     pactSha: string,
-    verificationId: number
+    verificationId: number,
   ): HalLinks {
     const pr = encodeURIComponent(provider);
     const co = encodeURIComponent(consumer);
     return {
       self: this.link(
-        `/pacts/provider/${pr}/consumer/${co}/pact-version/${pactSha}/verification-results/${verificationId}`
+        `/pacts/provider/${pr}/consumer/${co}/pact-version/${pactSha}/verification-results/${verificationId}`,
       ),
       "pb:pact-version": this.link(
-        `/pacts/provider/${pr}/consumer/${co}/latest`
+        `/pacts/provider/${pr}/consumer/${co}/latest`,
       ),
     };
   }
@@ -132,7 +132,11 @@ export class HalBuilder {
     };
   }
 
-  deployment(pacticipant: string, version: string, environment: string): HalLinks {
+  deployment(
+    pacticipant: string,
+    version: string,
+    environment: string,
+  ): HalLinks {
     const p = encodeURIComponent(pacticipant);
     const v = encodeURIComponent(version);
     const e = encodeURIComponent(environment);

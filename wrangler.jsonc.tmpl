@@ -1,0 +1,53 @@
+/**
+ * Wrangler config TEMPLATE — do not edit the materialised wrangler.jsonc.
+ *
+ * `wrangler.jsonc` is generated from this file by Terraform on every apply
+ * (see infra/wrangler.tf → local_file.wrangler_config). The placeholder
+ * values below are filled in per workspace using your TF_VARs.
+ *
+ * If you need to change static settings (compatibility_flags, observability,
+ * durable_objects bindings, migrations, etc.), edit THIS template —
+ * `wrangler.jsonc` itself is gitignored and gets overwritten on the next
+ * apply.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "${worker_name}",
+  "account_id": "${account_id}",
+  "main": "src/index.ts",
+  "compatibility_date": "${compatibility_date}",
+  "compatibility_flags": ["nodejs_compat"],
+  "dev": {
+    "port": 9090
+  },
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PACT_BROKER",
+        "class_name": "PactBrokerDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PactBrokerDO"]
+    }
+  ],
+  "vars": {
+    "ALLOW_PUBLIC_READ": "${allow_public_read}"
+  }
+  // The Worker's custom-domain binding is managed by Terraform
+  // (infra/main.tf → cloudflare_workers_custom_domain.pact_broker).
+  // Do not re-add a "routes" block here — wrangler would then call the
+  // zone Workers Routes API on every deploy, which (a) duplicates
+  // Terraform's ownership and (b) requires an extra Workers Routes: Edit
+  // permission on the CI token.
+  //
+  // The PACT_BROKER_TOKEN secret is also managed by Terraform
+  // (infra/wrangler.tf → terraform_data.worker_secret) reading from
+  // AWS Secrets Manager. Do not add it as a plaintext `vars` entry.
+}

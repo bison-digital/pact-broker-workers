@@ -1,0 +1,29 @@
+# Copy to `.envrc` (gitignored), fill in values, and `direnv allow`.
+# Every TF_VAR_* below maps 1:1 to a terraform variable in infra/variables.tf.
+
+# --- Cloudflare credentials ---
+export TF_VAR_cloudflare_api_token=""
+export TF_VAR_cloudflare_zone_id=""
+export TF_VAR_cloudflare_account_id=""
+
+# --- AWS + state ---
+export TF_VAR_aws_region="eu-west-1"
+export TF_VAR_terraform_state_bucket=""
+
+# --- Per-workspace values ---
+# Set these to the value for the workspace you're applying against. Rotate
+# when you switch workspaces, or use direnv's `.envrc.<workspace>` layer.
+export TF_VAR_domain=""                  # e.g. pact-broker-staging.your-domain.com
+export TF_VAR_worker_name=""             # e.g. pact-broker-staging
+export TF_VAR_secrets_prefix="pact-broker"
+
+# --- Optional ---
+# export TF_VAR_allow_public_read="false"
+# export TF_VAR_wrangler_compatibility_date="2024-12-01"
+
+# --- AWS CLI auth (for `aws secretsmanager` seeding + Terraform S3 backend) ---
+# Either use AWS_PROFILE + aws sso login, or export keys here. Keys are
+# simpler for ephemeral CI-shaped workflows.
+# export AWS_PROFILE=""
+# export AWS_ACCESS_KEY_ID=""
+# export AWS_SECRET_ACCESS_KEY=""

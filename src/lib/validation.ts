@@ -13,7 +13,7 @@ export const nameSchema = z
   .max(255, "Name exceeds 255 characters")
   .regex(
     /^[a-zA-Z0-9._-]+$/,
-    "Name can only contain letters, numbers, dots, hyphens, and underscores"
+    "Name can only contain letters, numbers, dots, hyphens, and underscores",
   );
 
 // Version strings: flexible format (semver, git SHA, dates, etc.)
@@ -29,7 +29,7 @@ export const tagSchema = z
   .max(255, "Tag exceeds 255 characters")
   .regex(
     /^[a-zA-Z0-9._-]+$/,
-    "Tag can only contain letters, numbers, dots, hyphens, and underscores"
+    "Tag can only contain letters, numbers, dots, hyphens, and underscores",
   );
 
 // Branch names: similar to tags
@@ -39,7 +39,7 @@ export const branchSchema = z
   .max(255, "Branch exceeds 255 characters")
   .regex(
     /^[a-zA-Z0-9._/-]+$/,
-    "Branch can only contain letters, numbers, dots, hyphens, underscores, and slashes"
+    "Branch can only contain letters, numbers, dots, hyphens, underscores, and slashes",
   );
 
 // SHA-256 content hashes: exactly 64 hex characters
@@ -69,7 +69,7 @@ export const environmentNameSchema = z
   .max(100, "Environment name exceeds 100 characters")
   .regex(
     /^[a-zA-Z0-9_-]+$/,
-    "Environment name can only contain letters, numbers, hyphens, and underscores"
+    "Environment name can only contain letters, numbers, hyphens, and underscores",
   );
 
 /**
@@ -80,7 +80,7 @@ export function validateParam<T>(
   c: Context,
   schema: z.ZodSchema<T>,
   value: string | undefined,
-  paramName: string
+  paramName: string,
 ): { valid: true; value: T } | { valid: false; response: Response } {
   const result = schema.safeParse(value);
 
@@ -93,7 +93,7 @@ export function validateParam<T>(
           error: "Bad Request",
           message: `Invalid ${paramName}: ${errorMessage}`,
         },
-        400
+        400,
       ) as unknown as Response,
     };
   }
@@ -111,7 +111,7 @@ export function validateParams(
     schema: z.ZodSchema;
     value: string | undefined;
     name: string;
-  }>
+  }>,
 ): { valid: true; values: unknown[] } | { valid: false; response: Response } {
   const values: unknown[] = [];
 
