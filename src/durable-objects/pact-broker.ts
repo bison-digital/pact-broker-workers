@@ -1,8 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import {
-  drizzle,
-  type DrizzleSqliteDODatabase,
-} from "drizzle-orm/durable-sqlite";
+import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { eq, and, desc, isNull } from "drizzle-orm";
 import {
   pacticipants,
@@ -21,12 +18,7 @@ import {
   type DeployedVersion,
 } from "../db/schema";
 import { runMigrations } from "../db/migrations";
-import type {
-  Env,
-  PactContent,
-  MatrixRow,
-  ConsumerVersionSelector,
-} from "../types";
+import type { Env, PactContent, MatrixRow, ConsumerVersionSelector } from "../types";
 
 export class PactBrokerDO extends DurableObject<Env> {
   private db: DrizzleSqliteDODatabase;
@@ -46,29 +38,17 @@ export class PactBrokerDO extends DurableObject<Env> {
   // ============ Pacticipant Operations ============
 
   async getOrCreatePacticipant(name: string): Promise<Pacticipant> {
-    const existing = this.db
-      .select()
-      .from(pacticipants)
-      .where(eq(pacticipants.name, name))
-      .get();
+    const existing = this.db.select().from(pacticipants).where(eq(pacticipants.name, name)).get();
 
     if (existing) return existing;
 
-    const result = this.db
-      .insert(pacticipants)
-      .values({ name })
-      .returning()
-      .get();
+    const result = this.db.insert(pacticipants).values({ name }).returning().get();
 
     return result;
   }
 
   async getPacticipant(name: string): Promise<Pacticipant | undefined> {
-    return this.db
-      .select()
-      .from(pacticipants)
-      .where(eq(pacticipants.name, name))
-      .get();
+    return this.db.select().from(pacticipants).where(eq(pacticipants.name, name)).get();
   }
 
   async getAllPacticipants(): Promise<Pacticipant[]> {
@@ -88,12 +68,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     const existing = this.db
       .select()
       .from(versions)
-      .where(
-        and(
-          eq(versions.pacticipantId, pacticipant.id),
-          eq(versions.number, versionNumber),
-        ),
-      )
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.number, versionNumber)))
       .get();
 
     if (existing) {
@@ -114,22 +89,14 @@ export class PactBrokerDO extends DurableObject<Env> {
     return { pacticipant, version };
   }
 
-  async getVersion(
-    pacticipantName: string,
-    versionNumber: string,
-  ): Promise<Version | undefined> {
+  async getVersion(pacticipantName: string, versionNumber: string): Promise<Version | undefined> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return undefined;
 
     return this.db
       .select()
       .from(versions)
-      .where(
-        and(
-          eq(versions.pacticipantId, pacticipant.id),
-          eq(versions.number, versionNumber),
-        ),
-      )
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.number, versionNumber)))
       .get();
   }
 
@@ -164,25 +131,14 @@ export class PactBrokerDO extends DurableObject<Env> {
 
     if (existing) return existing;
 
-    return this.db
-      .insert(tags)
-      .values({ versionId: version.id, name: tagName })
-      .returning()
-      .get();
+    return this.db.insert(tags).values({ versionId: version.id, name: tagName }).returning().get();
   }
 
-  async getTagsForVersion(
-    pacticipantName: string,
-    versionNumber: string,
-  ): Promise<Tag[]> {
+  async getTagsForVersion(pacticipantName: string, versionNumber: string): Promise<Tag[]> {
     const version = await this.getVersion(pacticipantName, versionNumber);
     if (!version) return [];
 
-    return this.db
-      .select()
-      .from(tags)
-      .where(eq(tags.versionId, version.id))
-      .all();
+    return this.db.select().from(tags).where(eq(tags.versionId, version.id)).all();
   }
 
   async getLatestVersionByTag(
@@ -196,9 +152,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .select({ version: versions })
       .from(versions)
       .innerJoin(tags, eq(tags.versionId, versions.id))
-      .where(
-        and(eq(versions.pacticipantId, pacticipant.id), eq(tags.name, tagName)),
-      )
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(tags.name, tagName)))
       .orderBy(desc(versions.createdAt))
       .get();
 
@@ -230,12 +184,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     const existing = this.db
       .select()
       .from(pacts)
-      .where(
-        and(
-          eq(pacts.consumerVersionId, consumerVer.id),
-          eq(pacts.providerId, provider.id),
-        ),
-      )
+      .where(and(eq(pacts.consumerVersionId, consumerVer.id), eq(pacts.providerId, provider.id)))
       .get();
 
     if (existing) {
@@ -290,12 +239,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     const pact = this.db
       .select()
       .from(pacts)
-      .where(
-        and(
-          eq(pacts.consumerVersionId, version.id),
-          eq(pacts.providerId, provider.id),
-        ),
-      )
+      .where(and(eq(pacts.consumerVersionId, version.id), eq(pacts.providerId, provider.id)))
       .get();
 
     if (!pact) return null;
@@ -327,12 +271,7 @@ export class PactBrokerDO extends DurableObject<Env> {
         .select({ version: versions })
         .from(versions)
         .innerJoin(pacts, eq(pacts.consumerVersionId, versions.id))
-        .where(
-          and(
-            eq(versions.pacticipantId, consumer.id),
-            eq(pacts.providerId, provider.id),
-          ),
-        )
+        .where(and(eq(versions.pacticipantId, consumer.id), eq(pacts.providerId, provider.id)))
         .orderBy(desc(versions.createdAt))
         .get();
 
@@ -344,12 +283,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     const pact = this.db
       .select()
       .from(pacts)
-      .where(
-        and(
-          eq(pacts.consumerVersionId, version.id),
-          eq(pacts.providerId, provider.id),
-        ),
-      )
+      .where(and(eq(pacts.consumerVersionId, version.id), eq(pacts.providerId, provider.id)))
       .get();
 
     if (!pact) return null;
@@ -429,12 +363,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     const version = this.db
       .select()
       .from(versions)
-      .where(
-        and(
-          eq(versions.id, pact.consumerVersionId),
-          eq(versions.pacticipantId, consumer.id),
-        ),
-      )
+      .where(and(eq(versions.id, pact.consumerVersionId), eq(versions.pacticipantId, consumer.id)))
       .get();
 
     if (!version) return null;
@@ -457,10 +386,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     if (!pact) return null;
 
     // Get or create provider version
-    const { version: providerVer } = await this.getOrCreateVersion(
-      providerName,
-      providerVersion,
-    );
+    const { version: providerVer } = await this.getOrCreateVersion(providerName, providerVersion);
 
     // Create verification result
     return this.db
@@ -489,11 +415,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     providerVersion: Version;
     pact: Pact;
   } | null> {
-    const verification = this.db
-      .select()
-      .from(verifications)
-      .where(eq(verifications.id, id))
-      .get();
+    const verification = this.db.select().from(verifications).where(eq(verifications.id, id)).get();
 
     if (!verification) return null;
 
@@ -503,11 +425,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .where(eq(versions.id, verification.providerVersionId))
       .get();
 
-    const pact = this.db
-      .select()
-      .from(pacts)
-      .where(eq(pacts.id, verification.pactId))
-      .get();
+    const pact = this.db.select().from(pacts).where(eq(pacts.id, verification.pactId)).get();
 
     if (!providerVersion || !pact) return null;
 
@@ -533,11 +451,7 @@ export class PactBrokerDO extends DurableObject<Env> {
 
   // ============ Matrix / Can-I-Deploy Operations ============
 
-  async getMatrix(
-    pacticipantName: string,
-    version?: string,
-    toTag?: string,
-  ): Promise<MatrixRow[]> {
+  async getMatrix(pacticipantName: string, version?: string, toTag?: string): Promise<MatrixRow[]> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return [];
 
@@ -574,10 +488,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       // Get latest verification for target tag if specified
       let verification: Verification | undefined;
       if (toTag) {
-        const providerVersion = await this.getLatestVersionByTag(
-          provider.name,
-          toTag,
-        );
+        const providerVersion = await this.getLatestVersionByTag(provider.name, toTag);
         if (providerVersion) {
           verification = this.db
             .select()
@@ -666,11 +577,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     displayName?: string,
     production?: boolean,
   ): Promise<Environment> {
-    const existing = this.db
-      .select()
-      .from(environments)
-      .where(eq(environments.name, name))
-      .get();
+    const existing = this.db.select().from(environments).where(eq(environments.name, name)).get();
 
     if (existing) {
       // Update if values provided
@@ -700,11 +607,7 @@ export class PactBrokerDO extends DurableObject<Env> {
   }
 
   async getEnvironment(name: string): Promise<Environment | undefined> {
-    return this.db
-      .select()
-      .from(environments)
-      .where(eq(environments.name, name))
-      .get();
+    return this.db.select().from(environments).where(eq(environments.name, name)).get();
   }
 
   async getAllEnvironments(): Promise<Environment[]> {
@@ -799,10 +702,7 @@ export class PactBrokerDO extends DurableObject<Env> {
         environment: environments,
       })
       .from(deployedVersions)
-      .innerJoin(
-        environments,
-        eq(deployedVersions.environmentId, environments.id),
-      )
+      .innerJoin(environments, eq(deployedVersions.environmentId, environments.id))
       .where(eq(deployedVersions.versionId, version.id))
       .all();
 
@@ -840,12 +740,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     const deployment = this.db
       .select()
       .from(deployedVersions)
-      .where(
-        and(
-          eq(deployedVersions.versionId, version.id),
-          isNull(deployedVersions.undeployedAt),
-        ),
-      )
+      .where(and(eq(deployedVersions.versionId, version.id), isNull(deployedVersions.undeployedAt)))
       .get();
 
     return !!deployment;
@@ -896,9 +791,7 @@ export class PactBrokerDO extends DurableObject<Env> {
 
       // Filter by consumer
       if (selector.consumer) {
-        selectorResults = selectorResults.filter(
-          (r) => r.consumer.name === selector.consumer,
-        );
+        selectorResults = selectorResults.filter((r) => r.consumer.name === selector.consumer);
         notices.push(`consumer is ${selector.consumer}`);
       }
 
@@ -906,10 +799,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       if (selector.tag) {
         const filteredByTag: typeof selectorResults = [];
         for (const r of selectorResults) {
-          const versionTags = await this.getTagsForVersion(
-            r.consumer.name,
-            r.version.number,
-          );
+          const versionTags = await this.getTagsForVersion(r.consumer.name, r.version.number);
           if (versionTags.some((t) => t.name === selector.tag)) {
             filteredByTag.push(r);
           }
@@ -920,9 +810,7 @@ export class PactBrokerDO extends DurableObject<Env> {
 
       // Filter by branch
       if (selector.branch) {
-        selectorResults = selectorResults.filter(
-          (r) => r.version.branch === selector.branch,
-        );
+        selectorResults = selectorResults.filter((r) => r.version.branch === selector.branch);
         notices.push(`version is on branch '${selector.branch}'`);
       }
 
@@ -973,10 +861,7 @@ export class PactBrokerDO extends DurableObject<Env> {
         } else {
           matchedPacts.set(r.pact.id, {
             ...r,
-            notices:
-              notices.length > 0
-                ? notices
-                : ["it matches the consumer version selectors"],
+            notices: notices.length > 0 ? notices : ["it matches the consumer version selectors"],
           });
         }
       }

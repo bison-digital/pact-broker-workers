@@ -49,10 +49,7 @@ app.get("/:name", async (c) => {
   const pacticipant = await broker.getPacticipant(name);
 
   if (!pacticipant) {
-    return c.json(
-      { error: "Not Found", message: "Pacticipant not found" },
-      404,
-    );
+    return c.json({ error: "Not Found", message: "Pacticipant not found" }, 404);
   }
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -99,12 +96,7 @@ app.get("/:name/versions/:version", async (c) => {
   if (!nameResult.valid) return nameResult.response;
   const name = nameResult.value;
 
-  const versionResult = validateParam(
-    c,
-    versionSchema,
-    c.req.param("version"),
-    "version",
-  );
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
   if (!versionResult.valid) return versionResult.response;
   const versionNumber = versionResult.value;
 
@@ -210,10 +202,7 @@ app.put("/:name/versions/:version/tags/:tag", async (c) => {
   const tag = await broker.addTag(name, versionNumber, tagName);
 
   if (!tag) {
-    return c.json(
-      { error: "Internal Error", message: "Failed to create tag" },
-      500,
-    );
+    return c.json({ error: "Internal Error", message: "Failed to create tag" }, 500);
   }
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -231,10 +220,7 @@ app.get("/:name/versions/:version/deployed", async (c) => {
   const name = c.req.param("name");
   const versionNumber = c.req.param("version");
   const broker = getBroker(c.env);
-  const deployments = await broker.getDeploymentsForVersion(
-    name,
-    versionNumber,
-  );
+  const deployments = await broker.getDeploymentsForVersion(name, versionNumber);
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
 
   const response = {
@@ -275,17 +261,10 @@ app.put("/:name/versions/:version/deployed/:environment", async (c) => {
     );
   }
 
-  const deployment = await broker.recordDeployment(
-    name,
-    versionNumber,
-    environmentName,
-  );
+  const deployment = await broker.recordDeployment(name, versionNumber, environmentName);
 
   if (!deployment) {
-    return c.json(
-      { error: "Internal Error", message: "Failed to record deployment" },
-      500,
-    );
+    return c.json({ error: "Internal Error", message: "Failed to record deployment" }, 500);
   }
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -306,11 +285,7 @@ app.delete("/:name/versions/:version/deployed/:environment", async (c) => {
   const environmentName = c.req.param("environment");
   const broker = getBroker(c.env);
 
-  const success = await broker.recordUndeployment(
-    name,
-    versionNumber,
-    environmentName,
-  );
+  const success = await broker.recordUndeployment(name, versionNumber, environmentName);
 
   if (!success) {
     return c.json(

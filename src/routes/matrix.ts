@@ -13,8 +13,7 @@ function getBroker(env: Env) {
 // Query the matrix
 app.get("/matrix", async (c) => {
   // Parse query params - supports both array format and single values
-  const pacticipant =
-    c.req.query("q[][pacticipant]") ?? c.req.query("pacticipant");
+  const pacticipant = c.req.query("q[][pacticipant]") ?? c.req.query("pacticipant");
   const version = c.req.query("q[][version]") ?? c.req.query("version");
   const latestTag = c.req.query("q[][tag]") ?? c.req.query("tag");
 
@@ -29,18 +28,12 @@ app.get("/matrix", async (c) => {
   }
 
   const broker = getBroker(c.env);
-  const matrix = await broker.getMatrix(
-    pacticipant,
-    version ?? undefined,
-    latestTag ?? undefined,
-  );
+  const matrix = await broker.getMatrix(pacticipant, version ?? undefined, latestTag ?? undefined);
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: MatrixResponse = {
     summary: {
-      deployable: matrix.every(
-        (row) => row.verificationResult?.success === true,
-      ),
+      deployable: matrix.every((row) => row.verificationResult?.success === true),
       reason:
         matrix.length === 0
           ? "No pacts found"
@@ -72,11 +65,7 @@ app.get("/can-i-deploy", async (c) => {
   }
 
   const broker = getBroker(c.env);
-  const result = await broker.canIDeploy(
-    pacticipant,
-    version,
-    toTag ?? undefined,
-  );
+  const result = await broker.canIDeploy(pacticipant, version, toTag ?? undefined);
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: CanIDeployResponse = {
