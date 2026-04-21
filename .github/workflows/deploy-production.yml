@@ -67,8 +67,8 @@ jobs:
             -backend-config="region=${{ vars.AWS_REGION }}"
         working-directory: infra
 
-      - name: Select production workspace
-        run: terraform workspace select -or-create production
+      - name: Select workspace
+        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
         working-directory: infra
 
       - name: Terraform plan
@@ -135,8 +135,8 @@ jobs:
             -backend-config="region=${{ vars.AWS_REGION }}"
         working-directory: infra
 
-      - name: Select production workspace
-        run: terraform workspace select -or-create production
+      - name: Select workspace
+        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
         working-directory: infra
 
       - name: Download tfplan artifact
