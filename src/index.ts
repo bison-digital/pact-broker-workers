@@ -8,6 +8,9 @@ import { pactRoutes } from "./routes/pacts";
 import { verificationRoutes } from "./routes/verifications";
 import { matrixRoutes } from "./routes/matrix";
 import { environmentRoutes } from "./routes/environments";
+import { webhookRoutes } from "./routes/webhooks";
+import { badgeRoutes } from "./routes/badge";
+import { HAL_BROWSER_HTML } from "./ui/index";
 
 // Re-export the Durable Object class
 export { PactBrokerDO } from "./durable-objects/pact-broker";
@@ -73,21 +76,41 @@ app.use("*", async (c, next) => {
 
 app.use("*", cors());
 
-// Auth middleware (applied to all routes except health)
+// Paths that skip bearer-token auth. The HAL UI ships only static HTML/JS and
+// asks the user for a token in the browser; badges are SVG meant to be embedded
+// in README files, so they're public unless PUBLIC_BADGES is explicitly "false".
+function isPublicPath(path: string, env: Env): boolean {
+  if (path === "/health") return true;
+  if (path === "/ui") return true;
+  if (
+    env.PUBLIC_BADGES !== "false" &&
+    /^\/pacts\/provider\/[^/]+\/consumer\/[^/]+\/badge$/.test(path)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+// Auth middleware (applied to all routes except public ones above)
 app.use("*", async (c, next) => {
-  // Skip auth for health check
-  if (c.req.path === "/health") {
+  if (isPublicPath(c.req.path, c.env)) {
     return next();
   }
   return authMiddleware(c, next);
 });
+
+// Serve the HAL browser UI before mounting authenticated API routes so
+// it always wins the path match.
+app.get("/ui", (c) => c.html(HAL_BROWSER_HTML));
 
 // Mount routes
 app.route("/", indexRoutes);
 app.route("/pacticipants", pacticipantRoutes);
 app.route("/pacts", pactRoutes);
 app.route("/pacts", verificationRoutes);
+app.route("/pacts", badgeRoutes);
 app.route("/environments", environmentRoutes);
+app.route("/webhooks", webhookRoutes);
 app.route("/", matrixRoutes);
 
 // 404 handler

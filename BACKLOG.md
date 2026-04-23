@@ -4,16 +4,14 @@ Things this broker deliberately does not do yet. Filed here so operators know wh
 
 ## Feature parity with the reference Pact Broker
 
-### Webhooks
-Not implemented. The reference broker fires HTTP webhooks on pact publish / verification result, which many teams use to trigger provider CI. Workarounds:
-- Poll `pacts-for-verification` from provider CI on a schedule.
-- Use the broker's response payload to decide whether to run verification inline.
+### Webhooks (shipped)
+Implemented. `POST /webhooks` to subscribe; fire on `contract_published` and `provider_verification_published`. Best-effort delivery with three retries; every attempt logged to `GET /webhooks/{id}/executions`. Admin-only (no `ALLOW_PUBLIC_READ` bypass).
 
-### HAL Browser UI
-Not implemented. Browsing pacts/pacticipants requires the HAL API directly (`curl … -H 'Accept: application/hal+json'`) or a HAL-aware client (`pact-broker` CLI). No server-rendered UI.
+### HAL browser UI (shipped)
+Implemented. A dependency-free HTML page at `/ui` that prompts for the bearer token (stored only in `sessionStorage`) and lets operators follow HAL `_links`.
 
-### Matrix badge endpoint
-Not implemented. `GET /pacts/provider/{p}/consumer/{c}/badge` returns 404. Embed the `can-i-deploy` call in a README badge generator externally if needed.
+### Matrix badge endpoint (shipped)
+Implemented. `GET /pacts/provider/{p}/consumer/{c}/badge` returns an SVG pill. Public by default (set `PUBLIC_BADGES=false` to require auth).
 
 ## Hardening / hygiene
 

@@ -9,6 +9,8 @@ import {
   verifications,
   environments,
   deployedVersions,
+  webhooks,
+  webhookExecutions,
   type Pacticipant,
   type Version,
   type Tag,
@@ -16,9 +18,21 @@ import {
   type Verification,
   type Environment,
   type DeployedVersion,
+  type Webhook,
+  type WebhookExecution,
 } from "../db/schema";
 import { runMigrations } from "../db/migrations";
-import type { Env, PactContent, MatrixRow, ConsumerVersionSelector } from "../types";
+import type {
+  Env,
+  PactContent,
+  MatrixRow,
+  ConsumerVersionSelector,
+  WebhookEvent,
+  WebhookEventPayload,
+} from "../types";
+
+const MAX_WEBHOOK_RESPONSE_BYTES = 4 * 1024;
+const WEBHOOK_RETRY_DELAYS_MS = [200, 800, 3200];
 
 export class PactBrokerDO extends DurableObject<Env> {
   private db: DrizzleSqliteDODatabase;
@@ -868,6 +882,390 @@ export class PactBrokerDO extends DurableObject<Env> {
     }
 
     return Array.from(matchedPacts.values());
+  }
+
+  // ============ Webhook Operations ============
+
+  async createWebhook(input: {
+    events: WebhookEvent[];
+    url: string;
+    method?: string;
+    headers?: Record<string, string> | null;
+    body?: string | null;
+    consumer?: string | null;
+    provider?: string | null;
+    enabled?: boolean;
+    description?: string | null;
+  }): Promise<Webhook> {
+    const consumerId = input.consumer
+      ? (await this.getOrCreatePacticipant(input.consumer)).id
+      : null;
+    const providerId = input.provider
+      ? (await this.getOrCreatePacticipant(input.provider)).id
+      : null;
+
+    return this.db
+      .insert(webhooks)
+      .values({
+        consumerId,
+        providerId,
+        events: input.events.join(","),
+        url: input.url,
+        method: input.method ?? "POST",
+        headers: input.headers ? JSON.stringify(input.headers) : null,
+        body: input.body ?? null,
+        enabled: input.enabled ?? true,
+        description: input.description ?? null,
+      })
+      .returning()
+      .get();
+  }
+
+  async updateWebhook(
+    id: number,
+    input: Partial<{
+      events: WebhookEvent[];
+      url: string;
+      method: string;
+      headers: Record<string, string> | null;
+      body: string | null;
+      consumer: string | null;
+      provider: string | null;
+      enabled: boolean;
+      description: string | null;
+    }>,
+  ): Promise<Webhook | null> {
+    const existing = this.db.select().from(webhooks).where(eq(webhooks.id, id)).get();
+    if (!existing) return null;
+
+    const consumerId =
+      input.consumer === undefined
+        ? existing.consumerId
+        : input.consumer === null
+          ? null
+          : (await this.getOrCreatePacticipant(input.consumer)).id;
+    const providerId =
+      input.provider === undefined
+        ? existing.providerId
+        : input.provider === null
+          ? null
+          : (await this.getOrCreatePacticipant(input.provider)).id;
+
+    this.db
+      .update(webhooks)
+      .set({
+        consumerId,
+        providerId,
+        ...(input.events !== undefined && { events: input.events.join(",") }),
+        ...(input.url !== undefined && { url: input.url }),
+        ...(input.method !== undefined && { method: input.method }),
+        ...(input.headers !== undefined && {
+          headers: input.headers ? JSON.stringify(input.headers) : null,
+        }),
+        ...(input.body !== undefined && { body: input.body }),
+        ...(input.enabled !== undefined && { enabled: input.enabled }),
+        ...(input.description !== undefined && { description: input.description }),
+      })
+      .where(eq(webhooks.id, id))
+      .run();
+
+    return this.db.select().from(webhooks).where(eq(webhooks.id, id)).get() ?? null;
+  }
+
+  async deleteWebhook(id: number): Promise<boolean> {
+    const existing = this.db.select().from(webhooks).where(eq(webhooks.id, id)).get();
+    if (!existing) return false;
+    this.db.delete(webhooks).where(eq(webhooks.id, id)).run();
+    return true;
+  }
+
+  async getWebhook(id: number): Promise<{
+    webhook: Webhook;
+    consumer: Pacticipant | null;
+    provider: Pacticipant | null;
+  } | null> {
+    const hook = this.db.select().from(webhooks).where(eq(webhooks.id, id)).get();
+    if (!hook) return null;
+    const consumer = hook.consumerId
+      ? (this.db.select().from(pacticipants).where(eq(pacticipants.id, hook.consumerId)).get() ??
+        null)
+      : null;
+    const provider = hook.providerId
+      ? (this.db.select().from(pacticipants).where(eq(pacticipants.id, hook.providerId)).get() ??
+        null)
+      : null;
+    return { webhook: hook, consumer, provider };
+  }
+
+  async listWebhooks(): Promise<
+    Array<{
+      webhook: Webhook;
+      consumer: Pacticipant | null;
+      provider: Pacticipant | null;
+    }>
+  > {
+    const all = this.db.select().from(webhooks).all();
+    const results: Array<{
+      webhook: Webhook;
+      consumer: Pacticipant | null;
+      provider: Pacticipant | null;
+    }> = [];
+    for (const hook of all) {
+      const consumer = hook.consumerId
+        ? (this.db.select().from(pacticipants).where(eq(pacticipants.id, hook.consumerId)).get() ??
+          null)
+        : null;
+      const provider = hook.providerId
+        ? (this.db.select().from(pacticipants).where(eq(pacticipants.id, hook.providerId)).get() ??
+          null)
+        : null;
+      results.push({ webhook: hook, consumer, provider });
+    }
+    return results;
+  }
+
+  async getWebhookExecutions(webhookId: number, limit = 50): Promise<WebhookExecution[]> {
+    return this.db
+      .select()
+      .from(webhookExecutions)
+      .where(eq(webhookExecutions.webhookId, webhookId))
+      .orderBy(desc(webhookExecutions.executedAt))
+      .limit(limit)
+      .all();
+  }
+
+  // Build the default payload sent when a webhook has no body template.
+  private buildDefaultPayload(
+    event: WebhookEvent,
+    ctx: {
+      consumer: Pacticipant;
+      provider: Pacticipant;
+      consumerVersion?: Version;
+      pact?: Pact;
+      verification?: Verification;
+      providerVersion?: Version;
+    },
+  ): WebhookEventPayload {
+    const payload: WebhookEventPayload = {
+      event,
+      triggeredAt: new Date().toISOString(),
+      consumer: { name: ctx.consumer.name },
+      provider: { name: ctx.provider.name },
+    };
+    if (ctx.consumerVersion) payload.consumerVersion = ctx.consumerVersion.number;
+    if (ctx.pact && ctx.consumerVersion) {
+      payload.pact = {
+        contentSha: ctx.pact.contentSha,
+        url: `/pacts/provider/${encodeURIComponent(ctx.provider.name)}/consumer/${encodeURIComponent(ctx.consumer.name)}/pact-version/${ctx.pact.contentSha}`,
+      };
+    }
+    if (ctx.verification && ctx.providerVersion) {
+      payload.verification = {
+        success: ctx.verification.success,
+        providerVersion: ctx.providerVersion.number,
+        verifiedAt: ctx.verification.verifiedAt,
+        buildUrl: ctx.verification.buildUrl ?? null,
+      };
+    }
+    return payload;
+  }
+
+  // Very small template expander: replaces ${path.to.key} lookups in JSON-string bodies.
+  private renderTemplate(template: string, payload: WebhookEventPayload): string {
+    return template.replace(/\$\{([^}]+)\}/g, (_match, expr: string) => {
+      const parts = expr.trim().split(".");
+      let cursor: unknown = payload;
+      for (const p of parts) {
+        if (cursor && typeof cursor === "object" && p in (cursor as Record<string, unknown>)) {
+          cursor = (cursor as Record<string, unknown>)[p];
+        } else {
+          return "";
+        }
+      }
+      return typeof cursor === "string" ? cursor : JSON.stringify(cursor);
+    });
+  }
+
+  private async fireWebhook(
+    hook: Webhook,
+    event: WebhookEvent,
+    triggeredBy: string,
+    payload: WebhookEventPayload,
+  ): Promise<void> {
+    let headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (hook.headers) {
+      try {
+        headers = { ...headers, ...(JSON.parse(hook.headers) as Record<string, string>) };
+      } catch {
+        // ignore bad stored headers
+      }
+    }
+    const body = hook.body ? this.renderTemplate(hook.body, payload) : JSON.stringify(payload);
+
+    for (let attempt = 1; attempt <= WEBHOOK_RETRY_DELAYS_MS.length; attempt++) {
+      let status: number | null = null;
+      let respBody: string | null = null;
+      let error: string | null = null;
+      let succeeded = false;
+      try {
+        const res = await fetch(hook.url, { method: hook.method, headers, body });
+        status = res.status;
+        const text = await res.text();
+        respBody =
+          text.length > MAX_WEBHOOK_RESPONSE_BYTES
+            ? text.slice(0, MAX_WEBHOOK_RESPONSE_BYTES)
+            : text;
+        succeeded = res.ok;
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+
+      this.db
+        .insert(webhookExecutions)
+        .values({
+          webhookId: hook.id,
+          event,
+          triggeredBy,
+          requestUrl: hook.url,
+          requestMethod: hook.method,
+          responseStatus: status,
+          responseBody: respBody,
+          attempt,
+          succeeded,
+          error,
+        })
+        .run();
+
+      if (succeeded) return;
+      if (attempt < WEBHOOK_RETRY_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, WEBHOOK_RETRY_DELAYS_MS[attempt - 1]));
+      }
+    }
+  }
+
+  private matchingWebhooks(
+    event: WebhookEvent,
+    consumerId: number | null,
+    providerId: number | null,
+  ): Webhook[] {
+    const all = this.db.select().from(webhooks).where(eq(webhooks.enabled, true)).all();
+    return all.filter((h) => {
+      const eventList = h.events.split(",").map((s) => s.trim());
+      if (!eventList.includes(event)) return false;
+      if (h.consumerId !== null && h.consumerId !== consumerId) return false;
+      if (h.providerId !== null && h.providerId !== providerId) return false;
+      return true;
+    });
+  }
+
+  // Dispatch without blocking the caller. Safe to ctx.waitUntil() from the outside.
+  async dispatchContractPublished(pactId: number, triggeredBy: string): Promise<void> {
+    const pact = this.db.select().from(pacts).where(eq(pacts.id, pactId)).get();
+    if (!pact) return;
+    const version = this.db
+      .select()
+      .from(versions)
+      .where(eq(versions.id, pact.consumerVersionId))
+      .get();
+    if (!version) return;
+    const consumer = this.db
+      .select()
+      .from(pacticipants)
+      .where(eq(pacticipants.id, version.pacticipantId))
+      .get();
+    const provider = this.db
+      .select()
+      .from(pacticipants)
+      .where(eq(pacticipants.id, pact.providerId))
+      .get();
+    if (!consumer || !provider) return;
+
+    const hooks = this.matchingWebhooks("contract_published", consumer.id, provider.id);
+    if (hooks.length === 0) return;
+
+    const payload = this.buildDefaultPayload("contract_published", {
+      consumer,
+      provider,
+      consumerVersion: version,
+      pact,
+    });
+
+    await Promise.all(
+      hooks.map((h) => this.fireWebhook(h, "contract_published", triggeredBy, payload)),
+    );
+  }
+
+  async dispatchVerificationPublished(verificationId: number, triggeredBy: string): Promise<void> {
+    const verification = this.db
+      .select()
+      .from(verifications)
+      .where(eq(verifications.id, verificationId))
+      .get();
+    if (!verification) return;
+    const pact = this.db.select().from(pacts).where(eq(pacts.id, verification.pactId)).get();
+    if (!pact) return;
+    const providerVersion = this.db
+      .select()
+      .from(versions)
+      .where(eq(versions.id, verification.providerVersionId))
+      .get();
+    const consumerVersion = this.db
+      .select()
+      .from(versions)
+      .where(eq(versions.id, pact.consumerVersionId))
+      .get();
+    if (!providerVersion || !consumerVersion) return;
+    const consumer = this.db
+      .select()
+      .from(pacticipants)
+      .where(eq(pacticipants.id, consumerVersion.pacticipantId))
+      .get();
+    const provider = this.db
+      .select()
+      .from(pacticipants)
+      .where(eq(pacticipants.id, pact.providerId))
+      .get();
+    if (!consumer || !provider) return;
+
+    const hooks = this.matchingWebhooks(
+      "provider_verification_published",
+      consumer.id,
+      provider.id,
+    );
+    if (hooks.length === 0) return;
+
+    const payload = this.buildDefaultPayload("provider_verification_published", {
+      consumer,
+      provider,
+      consumerVersion,
+      pact,
+      verification,
+      providerVersion,
+    });
+
+    await Promise.all(
+      hooks.map((h) =>
+        this.fireWebhook(h, "provider_verification_published", triggeredBy, payload),
+      ),
+    );
+  }
+
+  async executeWebhookManually(webhookId: number): Promise<{ fired: boolean; reason?: string }> {
+    const hook = this.db.select().from(webhooks).where(eq(webhooks.id, webhookId)).get();
+    if (!hook) return { fired: false, reason: "not found" };
+    if (!hook.enabled) return { fired: false, reason: "webhook is disabled" };
+
+    const eventList = hook.events.split(",").map((s) => s.trim()) as WebhookEvent[];
+    const event = eventList[0] ?? "contract_published";
+
+    const payload: WebhookEventPayload = {
+      event,
+      triggeredAt: new Date().toISOString(),
+      consumer: { name: "manual-trigger" },
+      provider: { name: "manual-trigger" },
+    };
+    await this.fireWebhook(hook, event, "manual", payload);
+    return { fired: true };
   }
 
   // ============ Utilities ============

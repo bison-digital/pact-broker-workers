@@ -126,12 +126,17 @@ app.put(
     // Get branch from query param if provided
     const branch = c.req.query("branch") ?? undefined;
 
-    const { created } = await broker.publishPact(
+    const { pact: savedPact, created } = await broker.publishPact(
       consumerName,
       consumerVersion,
       providerName,
       body,
       branch,
+    );
+
+    // Fire any matching webhooks without blocking the response.
+    c.executionCtx.waitUntil(
+      broker.dispatchContractPublished(savedPact.id, `pact:${savedPact.id}`),
     );
 
     // Get full details for response
