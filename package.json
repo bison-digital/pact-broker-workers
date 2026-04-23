@@ -46,7 +46,7 @@
     "@cloudflare/vitest-pool-workers": "^0.8.0",
     "@cloudflare/workers-types": "^4.20241205.0",
     "@types/node": "^22.10.0",
-    "@typescript/native-preview": "7.0.0-dev.20260327.2",
+    "@typescript/native-preview": "7.0.0-dev.20260423.1",
     "drizzle-kit": "^0.31.0",
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0",
