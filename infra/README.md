@@ -155,6 +155,20 @@ The broker stores pacts, verifications, tags, and deployment history in the `Pac
 
 This project does not ship a snapshot/export mechanism today; call it out in your operational runbook.
 
+## Edge rate limiting
+
+`main.tf` provisions a `cloudflare_ruleset` in the `http_ratelimit` phase with two rules (mutating / read), both scoped to the broker hostname and keyed by `ip.src`.
+
+- **Thresholds** — `mutating_rate_limit_threshold` (default 60/min) and `read_rate_limit_threshold` (default 600/min). Tune per deployment by overriding the vars.
+- **Kill switch** — `enable_rate_limiting = false` skips provisioning the ruleset. Use this on the Cloudflare free plan, which doesn't expose `rate_limit` actions in the standard `http_ratelimit` phase. The in-Worker body size (1 MB on `PUT /pacts`) and schema validation remain regardless.
+
+## Runtime environment variables
+
+Beyond `PACT_BROKER_TOKEN` (secret) and `ALLOW_PUBLIC_READ` (existing), two new knobs are wired through `wrangler.jsonc.tmpl`:
+
+- **`cors_allowed_origins`** — comma-separated origins that may talk to the broker from a browser. Empty/unset keeps the legacy permissive (`*`) behaviour. Once you host the HAL UI on a known domain, lock this down to that domain.
+- **`public_badges`** — `"false"` forces bearer-token auth on `/pacts/.../badge`; any other value keeps badges public (the expected README-embed case).
+
 ## Caveats
 
 - **Cloudflare provider pinned at `= 5.19.0-beta.5`** (see `versions.tf`). This picks up the `cloudflare_workers_custom_domain.environment` fix (attribute is now `Computed`, no longer triggers a forced-replacement diff). Pin moves to `~> 5.19` once Cloudflare cuts 5.19.0 stable.

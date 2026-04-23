@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory";
-import type { Env } from "../types";
+import type { HonoEnv } from "../types";
 
 /**
  * Constant-time string comparison to prevent timing attacks.
@@ -32,7 +32,7 @@ function timingSafeEqual(a: string, b: string): boolean {
  *
  * If ALLOW_PUBLIC_READ is "true", GET/HEAD requests are allowed without auth.
  */
-export const authMiddleware = createMiddleware<{ Bindings: Env }>(async (c, next) => {
+export const authMiddleware = createMiddleware<HonoEnv>(async (c, next) => {
   const method = c.req.method;
   const allowPublicRead = c.env.ALLOW_PUBLIC_READ === "true";
 

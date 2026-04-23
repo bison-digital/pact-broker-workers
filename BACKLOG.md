@@ -20,11 +20,11 @@ Items found during a periodic audit of the upstream repo. Not blockers; filed so
 ### Stale `compatibility_date`
 `wrangler.jsonc.tmpl` pins `compatibility_date: "2024-12-01"`. Bump to a recent date (e.g. `"2026-04-01"`) and verify the broker still builds + tests pass. Nothing in the current code requires new Workers features, but keeping the pin recent avoids accruing implicit tech debt.
 
-### Request body size limit
-No limit on `PUT /pacts/...` payloads. A leaked bearer token could write multi-MB pacts until the Durable Object fills. Add `hono/body-limit` middleware (suggest `maxSize: 1 MB` for pacts, keep GETs unbounded) and a test asserting 413 on oversize.
+### Request body size limit (shipped)
+`PUT /pacts/...` capped at 1 MB via `hono/body-limit`; pacts with more than 1000 interactions are rejected as 400. Global 10 MB cap retained for all other routes.
 
-### Rate limiting via Cloudflare ruleset
-Same failure mode as body-limit but from the other direction. Add a `cloudflare_ruleset` resource in `infra/main.tf` — something like "N requests per 10s per client IP" on mutating methods. Per-workspace so operators can tune. Not a Hono concern.
+### Rate limiting via Cloudflare ruleset (shipped)
+`infra/main.tf` now provisions a `cloudflare_ruleset` with two `http_ratelimit` rules (mutating vs read). Gated by `enable_rate_limiting` (default `true`) so operators on the free CF plan can disable it.
 
 ### Dependabot
 No `.github/dependabot.yml`. Upstream product + MIT license + Cloudflare SDK churn means deps will rot silently. Add weekly updates for `npm`, `terraform`, and `github-actions`.

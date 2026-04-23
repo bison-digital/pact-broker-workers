@@ -11,6 +11,15 @@ export interface Env {
   CORS_ALLOWED_ORIGINS?: string;
 }
 
+// Per-request variables we stash on the Hono context. Keep this narrow so the
+// shape stays discoverable.
+export interface AppVariables {
+  requestId: string;
+}
+
+// Shared type for Hono instances across the app.
+export type HonoEnv = { Bindings: Env; Variables: AppVariables };
+
 // HAL link structure
 export interface HalLink {
   href: string;

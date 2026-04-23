@@ -100,10 +100,16 @@ Because `infra/` is agnostic, these merges should be clean. If you get a conflic
 | --- | --- | --- |
 | `PACT_BROKER_TOKEN` | Bearer token. **Secret** — sourced from AWS Secrets Manager by Terraform, pushed to the Worker via `wrangler secret put`. | required |
 | `ALLOW_PUBLIC_READ` | If `"true"`, `GET`/`HEAD` requests bypass bearer auth. | `"false"` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated list of origins allowed by CORS. Unset = permissive (`*`). Once you host the HAL UI on a known domain, set this to that domain so browsers can't talk to the broker from anywhere. | `""` (permissive) |
+| `PUBLIC_BADGES` | Set to `"false"` to require a bearer token on `GET /pacts/provider/{p}/consumer/{c}/badge`. Any other value leaves badges public (the usual README-embed case). | `"true"` |
+
+Edge-level mitigations provisioned by Terraform:
+
+- **Rate limiting** — two rulesets on the broker hostname: mutating requests (`PUT`/`POST`/`DELETE`) are capped at `mutating_rate_limit_threshold` per IP per minute; reads at `read_rate_limit_threshold`. Both gated by `enable_rate_limiting` (default `true`). Requires a CF plan that supports the `http_ratelimit` phase (Pro+); disable on free tier.
 
 ## API reference
 
-All endpoints require `Authorization: Bearer <token>` unless `ALLOW_PUBLIC_READ=true`. Except `/health`.
+All endpoints require `Authorization: Bearer <token>` unless `ALLOW_PUBLIC_READ=true`. Three public exceptions: `/health`, `/ui` (HAL browser — the page itself, API calls from it still need a token), and `GET /pacts/provider/{p}/consumer/{c}/badge` (unless `PUBLIC_BADGES=false`).
 
 ### Pacts
 
@@ -143,11 +149,41 @@ All endpoints require `Authorization: Bearer <token>` unless `ALLOW_PUBLIC_READ=
 | `GET` | `/matrix?pacticipant={name}&version={version}` | Matrix query |
 | `GET` | `/can-i-deploy?pacticipant={name}&version={version}&to={tag}` | Deploy gate |
 
+### Webhooks
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/webhooks` | List webhooks |
+| `POST` | `/webhooks` | Create (JSON: `events`, `url` (must be `https://`), optional `consumer`, `provider`, `headers`, `body` template, `enabled`, `description`) |
+| `GET` | `/webhooks/{id}` | Get one |
+| `PUT` | `/webhooks/{id}` | Update (partial) |
+| `DELETE` | `/webhooks/{id}` | Delete |
+| `POST` | `/webhooks/{id}/execute` | Fire manually (for testing) |
+| `GET` | `/webhooks/{id}/executions` | Delivery log |
+
+Events supported: `contract_published`, `provider_verification_published`. Delivery is best-effort with three retries (200 ms / 800 ms / 3200 ms back-off). Every attempt is logged, including failures.
+
+### Badges
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/pacts/provider/{p}/consumer/{c}/badge?tag=...&label=...` | SVG verification badge — public unless `PUBLIC_BADGES=false` |
+
+### Browser UI
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/ui` | Minimal HAL browser. Prompts the user for the bearer token (never leaves the tab). |
+
 ### Health
 
 | Method | Path | Auth |
 | --- | --- | --- |
 | `GET` | `/health` | none — returns `{"status":"ok"}` |
+
+### Observability
+
+Every response carries `X-Request-Id` (either the caller's, if they sent a safe one, or a new UUID). The Worker emits a single JSON log line per request with `requestId`, `method`, `path`, `status`, and `durationMs`, and a matching line on error with the stack trace.
 
 ## Using with `pact-broker-client`
 

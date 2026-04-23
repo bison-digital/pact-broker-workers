@@ -65,10 +65,12 @@ resource "terraform_data" "worker_secret" {
 resource "local_file" "wrangler_config" {
   filename = "${local.worker_dir}/wrangler.jsonc"
   content = templatefile("${local.worker_dir}/wrangler.jsonc.tmpl", {
-    worker_name        = var.worker_name
-    account_id         = var.cloudflare_account_id
-    compatibility_date = var.wrangler_compatibility_date
-    allow_public_read  = var.allow_public_read
+    worker_name          = var.worker_name
+    account_id           = var.cloudflare_account_id
+    compatibility_date   = var.wrangler_compatibility_date
+    allow_public_read    = var.allow_public_read
+    cors_allowed_origins = var.cors_allowed_origins
+    public_badges        = var.public_badges
   })
   file_permission = "0644"
 }

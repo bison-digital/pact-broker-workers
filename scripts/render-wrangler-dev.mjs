@@ -18,6 +18,8 @@ const vars = {
   account_id: process.env.CLOUDFLARE_ACCOUNT_ID ?? "your-cloudflare-account-id",
   compatibility_date: process.env.WRANGLER_COMPATIBILITY_DATE ?? "2024-12-01",
   allow_public_read: process.env.ALLOW_PUBLIC_READ ?? "false",
+  cors_allowed_origins: process.env.CORS_ALLOWED_ORIGINS ?? "",
+  public_badges: process.env.PUBLIC_BADGES ?? "true",
 };
 
 const tmpl = readFileSync(resolve(repoRoot, "wrangler.jsonc.tmpl"), "utf8");
