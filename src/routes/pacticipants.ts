@@ -7,7 +7,13 @@ import type {
   DeploymentResponse,
 } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
-import { nameSchema, versionSchema, validateParam } from "../lib/validation";
+import {
+  nameSchema,
+  versionSchema,
+  tagSchema,
+  environmentNameSchema,
+  validateParam,
+} from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -127,8 +133,14 @@ app.get("/:name/versions/:version", async (c) => {
 
 // Get tags for a version
 app.get("/:name/versions/:version/tags", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
   const broker = getBroker(c.env);
   const versionTags = await broker.getTagsForVersion(name, versionNumber);
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -153,9 +165,18 @@ app.get("/:name/versions/:version/tags", async (c) => {
 
 // Get a specific tag
 app.get("/:name/versions/:version/tags/:tag", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
-  const tagName = c.req.param("tag");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const tagResult = validateParam(c, tagSchema, c.req.param("tag"), "tag");
+  if (!tagResult.valid) return tagResult.response;
+  const tagName = tagResult.value;
+
   const broker = getBroker(c.env);
 
   const tag = await broker.getTag(name, versionNumber, tagName);
@@ -182,9 +203,18 @@ app.get("/:name/versions/:version/tags/:tag", async (c) => {
 
 // Create/update a tag
 app.put("/:name/versions/:version/tags/:tag", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
-  const tagName = c.req.param("tag");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const tagResult = validateParam(c, tagSchema, c.req.param("tag"), "tag");
+  if (!tagResult.valid) return tagResult.response;
+  const tagName = tagResult.value;
+
   const broker = getBroker(c.env);
 
   // Ensure version exists first
@@ -217,8 +247,14 @@ app.put("/:name/versions/:version/tags/:tag", async (c) => {
 
 // Get deployments for a version
 app.get("/:name/versions/:version/deployed", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
   const broker = getBroker(c.env);
   const deployments = await broker.getDeploymentsForVersion(name, versionNumber);
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -244,9 +280,23 @@ app.get("/:name/versions/:version/deployed", async (c) => {
 
 // Record a deployment
 app.put("/:name/versions/:version/deployed/:environment", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
-  const environmentName = c.req.param("environment");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const environmentResult = validateParam(
+    c,
+    environmentNameSchema,
+    c.req.param("environment"),
+    "environment",
+  );
+  if (!environmentResult.valid) return environmentResult.response;
+  const environmentName = environmentResult.value;
+
   const broker = getBroker(c.env);
 
   // Ensure version exists first
@@ -280,9 +330,23 @@ app.put("/:name/versions/:version/deployed/:environment", async (c) => {
 
 // Record an undeployment
 app.delete("/:name/versions/:version/deployed/:environment", async (c) => {
-  const name = c.req.param("name");
-  const versionNumber = c.req.param("version");
-  const environmentName = c.req.param("environment");
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const environmentResult = validateParam(
+    c,
+    environmentNameSchema,
+    c.req.param("environment"),
+    "environment",
+  );
+  if (!environmentResult.valid) return environmentResult.response;
+  const environmentName = environmentResult.value;
+
   const broker = getBroker(c.env);
 
   const success = await broker.recordUndeployment(name, versionNumber, environmentName);

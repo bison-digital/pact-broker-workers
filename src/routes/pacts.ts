@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type {
   Env,
   PactResponse,
@@ -17,6 +18,23 @@ import {
 } from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// 1 MB per-route cap on PUT /pacts/... — well above real-world pacts (~100 KB)
+// while keeping a meaningful ceiling against leaked-token abuse.
+const PACT_PUBLISH_MAX_BYTES = 1 * 1024 * 1024;
+const MAX_INTERACTIONS = 1000;
+
+const pactPublishBodyLimit = bodyLimit({
+  maxSize: PACT_PUBLISH_MAX_BYTES,
+  onError: (c) =>
+    c.json(
+      {
+        error: "Payload Too Large",
+        message: `Pact body exceeds maximum size of ${PACT_PUBLISH_MAX_BYTES} bytes`,
+      },
+      413,
+    ),
+});
 
 // Helper to get DO stub
 function getBroker(env: Env) {
@@ -47,82 +65,100 @@ function buildPactResponse(
 }
 
 // Publish a pact
-app.put("/provider/:provider/consumer/:consumer/version/:version", async (c) => {
-  // Validate URL parameters
-  const providerResult = validateParam(c, nameSchema, c.req.param("provider"), "provider");
-  if (!providerResult.valid) return providerResult.response;
-  const providerName = providerResult.value;
+app.put(
+  "/provider/:provider/consumer/:consumer/version/:version",
+  pactPublishBodyLimit,
+  async (c) => {
+    // Validate URL parameters
+    const providerResult = validateParam(c, nameSchema, c.req.param("provider"), "provider");
+    if (!providerResult.valid) return providerResult.response;
+    const providerName = providerResult.value;
 
-  const consumerResult = validateParam(c, nameSchema, c.req.param("consumer"), "consumer");
-  if (!consumerResult.valid) return consumerResult.response;
-  const consumerName = consumerResult.value;
+    const consumerResult = validateParam(c, nameSchema, c.req.param("consumer"), "consumer");
+    if (!consumerResult.valid) return consumerResult.response;
+    const consumerName = consumerResult.value;
 
-  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
-  if (!versionResult.valid) return versionResult.response;
-  const consumerVersion = versionResult.value;
+    const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+    if (!versionResult.valid) return versionResult.response;
+    const consumerVersion = versionResult.value;
 
-  // Validate optional branch query param
-  const branchParam = c.req.query("branch");
-  if (branchParam) {
-    const branchResult = validateParam(c, branchSchema, branchParam, "branch");
-    if (!branchResult.valid) return branchResult.response;
-  }
+    // Validate optional branch query param
+    const branchParam = c.req.query("branch");
+    if (branchParam) {
+      const branchResult = validateParam(c, branchSchema, branchParam, "branch");
+      if (!branchResult.valid) return branchResult.response;
+    }
 
-  let body: PactContent;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Bad Request", message: "Invalid JSON body" }, 400);
-  }
+    let body: PactContent;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Bad Request", message: "Invalid JSON body" }, 400);
+    }
 
-  // Validate basic pact structure
-  if (!body.consumer || !body.provider || !body.interactions) {
-    return c.json(
-      {
-        error: "Bad Request",
-        message: "Pact must contain consumer, provider, and interactions",
-      },
-      400,
+    // Validate basic pact structure
+    if (!body.consumer || !body.provider || !body.interactions) {
+      return c.json(
+        {
+          error: "Bad Request",
+          message: "Pact must contain consumer, provider, and interactions",
+        },
+        400,
+      );
+    }
+
+    if (!Array.isArray(body.interactions)) {
+      return c.json({ error: "Bad Request", message: "interactions must be an array" }, 400);
+    }
+
+    if (body.interactions.length > MAX_INTERACTIONS) {
+      return c.json(
+        {
+          error: "Bad Request",
+          message: `Pact contains ${body.interactions.length} interactions; the maximum is ${MAX_INTERACTIONS}`,
+        },
+        400,
+      );
+    }
+
+    const broker = getBroker(c.env);
+
+    // Get branch from query param if provided
+    const branch = c.req.query("branch") ?? undefined;
+
+    const { created } = await broker.publishPact(
+      consumerName,
+      consumerVersion,
+      providerName,
+      body,
+      branch,
     );
-  }
 
-  const broker = getBroker(c.env);
+    // Get full details for response
+    const result = await broker.getPact(providerName, consumerName, consumerVersion);
 
-  // Get branch from query param if provided
-  const branch = c.req.query("branch") ?? undefined;
+    if (!result) {
+      return c.json(
+        {
+          error: "Internal Error",
+          message: "Failed to retrieve published pact",
+        },
+        500,
+      );
+    }
 
-  const { created } = await broker.publishPact(
-    consumerName,
-    consumerVersion,
-    providerName,
-    body,
-    branch,
-  );
-
-  // Get full details for response
-  const result = await broker.getPact(providerName, consumerName, consumerVersion);
-
-  if (!result) {
-    return c.json(
-      {
-        error: "Internal Error",
-        message: "Failed to retrieve published pact",
-      },
-      500,
+    const hal = new HalBuilder(getBaseUrl(c.req.raw));
+    const response = buildPactResponse(
+      hal,
+      result.pact,
+      result.consumer,
+      result.provider,
+      result.version,
     );
-  }
 
-  const hal = new HalBuilder(getBaseUrl(c.req.raw));
-  const response = buildPactResponse(
-    hal,
-    result.pact,
-    result.consumer,
-    result.provider,
-    result.version,
-  );
-
-  return c.json(response, created ? 201 : 200);
-});
+    return c.json(response, created ? 201 : 200);
+  },
+);
 
 // Get a specific pact version
 app.get("/provider/:provider/consumer/:consumer/version/:version", async (c) => {

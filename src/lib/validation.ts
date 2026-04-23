@@ -125,3 +125,22 @@ export function validateParams(
 
   return { valid: true, values };
 }
+
+/**
+ * Validate an optional query param. If the value is undefined or empty it is
+ * returned as undefined (caller decides whether that's OK). If present it must
+ * parse against the schema; otherwise returns a 400 response.
+ */
+export function validateOptionalQuery<T>(
+  c: Context,
+  schema: z.ZodSchema<T>,
+  value: string | undefined,
+  paramName: string,
+): { valid: true; value: T | undefined } | { valid: false; response: Response } {
+  if (value === undefined || value === "") {
+    return { valid: true, value: undefined };
+  }
+  const inner = validateParam(c, schema, value, paramName);
+  if (!inner.valid) return inner;
+  return { valid: true, value: inner.value };
+}
