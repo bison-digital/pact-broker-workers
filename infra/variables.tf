@@ -44,7 +44,7 @@ variable "secrets_prefix" {
 variable "wrangler_compatibility_date" {
   description = "compatibility_date written into the materialised wrangler.jsonc. Bump when you want the Worker to opt into newer Workers runtime behaviour."
   type        = string
-  default     = "2024-12-01"
+  default     = "2026-04-15"
 }
 
 variable "allow_public_read" {

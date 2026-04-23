@@ -70,15 +70,7 @@ describe("auth middleware", () => {
     expect(status).toBe(401);
   });
 
-  it.skip("ALLOW_PUBLIC_READ=true: GET bypasses auth — needs per-file miniflare override", () => {
-    // TODO: cover via a separate vitest project with
-    // miniflare.bindings.ALLOW_PUBLIC_READ="true". Mutating `env` from the
-    // test scope doesn't propagate into the Worker's env. Tracked in
-    // BACKLOG.md ("Test coverage → auth env-toggle cases").
-  });
-
-  it.skip("misconfigured PACT_BROKER_TOKEN (<8 chars) returns 500 — needs per-file miniflare override", () => {
-    // TODO: same reason as above. Covered at the unit level (auth middleware
-    // reads env.PACT_BROKER_TOKEN.length < 8 → 500) but not exercised here.
-  });
+  // The two env-toggle cases (ALLOW_PUBLIC_READ=true, short PACT_BROKER_TOKEN)
+  // run under dedicated vitest workspace projects with their own miniflare
+  // bindings: see test/auth.public-read.test.ts and test/auth.bad-token.test.ts.
 });
