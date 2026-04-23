@@ -38,17 +38,17 @@
   },
   "license": "MIT",
   "dependencies": {
-    "drizzle-orm": "^0.38.0",
-    "hono": "^4.6.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.14",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.8.0",
-    "@cloudflare/workers-types": "^4.20241205.0",
+    "@cloudflare/vitest-pool-workers": "^0.14.9",
+    "@cloudflare/workers-types": "^4.20260423.1",
     "@types/node": "^22.10.0",
     "@typescript/native-preview": "7.0.0-dev.20260327.2",
-    "drizzle-kit": "^0.31.0",
-    "oxfmt": "^0.42.0",
+    "drizzle-kit": "^0.31.10",
+    "oxfmt": "^0.46.0",
     "oxlint": "^1.57.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9",
