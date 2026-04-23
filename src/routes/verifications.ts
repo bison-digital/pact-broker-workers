@@ -122,6 +122,11 @@ app.post(
       );
     }
 
+    // Fire any matching webhooks without blocking the response.
+    c.executionCtx.waitUntil(
+      broker.dispatchVerificationPublished(verification.id, `verification:${verification.id}`),
+    );
+
     const hal = new HalBuilder(getBaseUrl(c.req.raw));
     const response: VerificationResultResponse = {
       success: verification.success,

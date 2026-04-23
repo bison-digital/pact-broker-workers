@@ -5,7 +5,20 @@ export interface Env {
   PACT_BROKER: DurableObjectNamespace<PactBrokerDO>;
   PACT_BROKER_TOKEN: string;
   ALLOW_PUBLIC_READ: string;
+  // "false" disables public badge access; any other value keeps them public.
+  PUBLIC_BADGES?: string;
+  // Comma-separated list of allowed CORS origins. Empty/unset = permissive (legacy).
+  CORS_ALLOWED_ORIGINS?: string;
 }
+
+// Per-request variables we stash on the Hono context. Keep this narrow so the
+// shape stays discoverable.
+export interface AppVariables {
+  requestId: string;
+}
+
+// Shared type for Hono instances across the app.
+export type HonoEnv = { Bindings: Env; Variables: AppVariables };
 
 // HAL link structure
 export interface HalLink {
@@ -172,5 +185,68 @@ export interface PactForVerification {
 export interface PactsForVerificationResponse extends HalResource {
   _embedded: {
     pacts: PactForVerification[];
+  };
+}
+
+// Webhook events
+export type WebhookEvent = "contract_published" | "provider_verification_published";
+
+export interface WebhookRequest {
+  events: WebhookEvent[];
+  url: string;
+  method?: "POST" | "PUT" | "PATCH";
+  headers?: Record<string, string>;
+  body?: string | null;
+  consumer?: string | null;
+  provider?: string | null;
+  enabled?: boolean;
+  description?: string;
+}
+
+export interface WebhookResponse extends HalResource {
+  id: number;
+  events: WebhookEvent[];
+  url: string;
+  method: string;
+  headers: Record<string, string> | null;
+  body: string | null;
+  consumer: string | null;
+  provider: string | null;
+  enabled: boolean;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface WebhookExecutionResponse extends HalResource {
+  id: number;
+  webhookId: number;
+  event: string;
+  triggeredBy: string | null;
+  requestUrl: string;
+  requestMethod: string;
+  responseStatus: number | null;
+  responseBody: string | null;
+  attempt: number;
+  succeeded: boolean;
+  error: string | null;
+  executedAt: string;
+}
+
+// Payload sent by the broker when firing a webhook (when body template is null).
+export interface WebhookEventPayload {
+  event: WebhookEvent;
+  triggeredAt: string;
+  consumer: { name: string };
+  provider: { name: string };
+  consumerVersion?: string;
+  pact?: {
+    contentSha: string;
+    url: string;
+  };
+  verification?: {
+    success: boolean;
+    providerVersion: string;
+    verifiedAt: string;
+    buildUrl: string | null;
   };
 }

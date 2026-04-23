@@ -76,6 +76,40 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS deployed_versions_env_idx ON deployed_versions(environment_id)`,
   `CREATE INDEX IF NOT EXISTS deployed_versions_version_idx ON deployed_versions(version_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS deployed_versions_version_env_idx ON deployed_versions(version_id, environment_id)`,
+
+  // v3: Webhooks + delivery log
+  `CREATE TABLE IF NOT EXISTS webhooks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    consumer_id INTEGER REFERENCES pacticipants(id) ON DELETE CASCADE,
+    provider_id INTEGER REFERENCES pacticipants(id) ON DELETE CASCADE,
+    events TEXT NOT NULL,
+    url TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'POST',
+    headers TEXT,
+    body TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    description TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS webhooks_consumer_idx ON webhooks(consumer_id)`,
+  `CREATE INDEX IF NOT EXISTS webhooks_provider_idx ON webhooks(provider_id)`,
+
+  `CREATE TABLE IF NOT EXISTS webhook_executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    triggered_by TEXT,
+    request_url TEXT NOT NULL,
+    request_method TEXT NOT NULL,
+    response_status INTEGER,
+    response_body TEXT,
+    attempt INTEGER NOT NULL,
+    succeeded INTEGER NOT NULL,
+    error TEXT,
+    executed_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS webhook_executions_webhook_idx ON webhook_executions(webhook_id)`,
+  `CREATE INDEX IF NOT EXISTS webhook_executions_executed_at_idx ON webhook_executions(executed_at)`,
 ];
 
 /**

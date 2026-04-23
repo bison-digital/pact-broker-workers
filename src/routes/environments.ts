@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env, EnvironmentResponse, EnvironmentRequest } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import { environmentNameSchema, validateParam } from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -36,7 +37,10 @@ app.get("/", async (c) => {
 
 // Get a specific environment
 app.get("/:name", async (c) => {
-  const name = c.req.param("name");
+  const nameResult = validateParam(c, environmentNameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
   const broker = getBroker(c.env);
   const env = await broker.getEnvironment(name);
 
@@ -58,7 +62,9 @@ app.get("/:name", async (c) => {
 
 // Create or update an environment
 app.put("/:name", async (c) => {
-  const name = c.req.param("name");
+  const nameResult = validateParam(c, environmentNameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
 
   let body: EnvironmentRequest = {};
   try {

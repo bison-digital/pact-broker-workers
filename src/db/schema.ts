@@ -143,6 +143,61 @@ export const deployedVersions = sqliteTable(
   ],
 );
 
+// Webhooks — user-configured outbound calls on pact / verification events.
+export const webhooks = sqliteTable(
+  "webhooks",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    consumerId: integer("consumer_id").references(() => pacticipants.id, {
+      onDelete: "cascade",
+    }),
+    providerId: integer("provider_id").references(() => pacticipants.id, {
+      onDelete: "cascade",
+    }),
+    events: text("events").notNull(), // comma-separated: contract_published, provider_verification_published
+    url: text("url").notNull(),
+    method: text("method").notNull().default("POST"),
+    headers: text("headers"), // JSON object of header name -> value
+    body: text("body"), // optional template; NULL = default HAL-ish payload
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    description: text("description"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("webhooks_consumer_idx").on(table.consumerId),
+    index("webhooks_provider_idx").on(table.providerId),
+  ],
+);
+
+// Webhook delivery log — one row per attempt.
+export const webhookExecutions = sqliteTable(
+  "webhook_executions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    webhookId: integer("webhook_id")
+      .notNull()
+      .references(() => webhooks.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    triggeredBy: text("triggered_by"), // pact id, verification id, or "manual"
+    requestUrl: text("request_url").notNull(),
+    requestMethod: text("request_method").notNull(),
+    responseStatus: integer("response_status"),
+    responseBody: text("response_body"), // truncated
+    attempt: integer("attempt").notNull(),
+    succeeded: integer("succeeded", { mode: "boolean" }).notNull(),
+    error: text("error"),
+    executedAt: text("executed_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("webhook_executions_webhook_idx").on(table.webhookId),
+    index("webhook_executions_executed_at_idx").on(table.executedAt),
+  ],
+);
+
 // Type exports for use in services
 export type Pacticipant = typeof pacticipants.$inferSelect;
 export type NewPacticipant = typeof pacticipants.$inferInsert;
@@ -164,3 +219,9 @@ export type NewEnvironment = typeof environments.$inferInsert;
 
 export type DeployedVersion = typeof deployedVersions.$inferSelect;
 export type NewDeployedVersion = typeof deployedVersions.$inferInsert;
+
+export type Webhook = typeof webhooks.$inferSelect;
+export type NewWebhook = typeof webhooks.$inferInsert;
+
+export type WebhookExecution = typeof webhookExecutions.$inferSelect;
+export type NewWebhookExecution = typeof webhookExecutions.$inferInsert;

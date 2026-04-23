@@ -1,6 +1,14 @@
 import { Hono } from "hono";
 import type { Env, MatrixResponse, CanIDeployResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import {
+  nameSchema,
+  versionSchema,
+  tagSchema,
+  environmentNameSchema,
+  validateParam,
+  validateOptionalQuery,
+} from "../lib/validation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -13,11 +21,11 @@ function getBroker(env: Env) {
 // Query the matrix
 app.get("/matrix", async (c) => {
   // Parse query params - supports both array format and single values
-  const pacticipant = c.req.query("q[][pacticipant]") ?? c.req.query("pacticipant");
-  const version = c.req.query("q[][version]") ?? c.req.query("version");
-  const latestTag = c.req.query("q[][tag]") ?? c.req.query("tag");
+  const pacticipantRaw = c.req.query("q[][pacticipant]") ?? c.req.query("pacticipant");
+  const versionRaw = c.req.query("q[][version]") ?? c.req.query("version");
+  const latestTagRaw = c.req.query("q[][tag]") ?? c.req.query("tag");
 
-  if (!pacticipant) {
+  if (!pacticipantRaw) {
     return c.json(
       {
         error: "Bad Request",
@@ -27,8 +35,20 @@ app.get("/matrix", async (c) => {
     );
   }
 
+  const pacticipantResult = validateParam(c, nameSchema, pacticipantRaw, "pacticipant");
+  if (!pacticipantResult.valid) return pacticipantResult.response;
+  const pacticipant = pacticipantResult.value;
+
+  const versionResult = validateOptionalQuery(c, versionSchema, versionRaw, "version");
+  if (!versionResult.valid) return versionResult.response;
+  const version = versionResult.value;
+
+  const tagResult = validateOptionalQuery(c, tagSchema, latestTagRaw, "tag");
+  if (!tagResult.valid) return tagResult.response;
+  const latestTag = tagResult.value;
+
   const broker = getBroker(c.env);
-  const matrix = await broker.getMatrix(pacticipant, version ?? undefined, latestTag ?? undefined);
+  const matrix = await broker.getMatrix(pacticipant, version, latestTag);
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: MatrixResponse = {
@@ -50,11 +70,11 @@ app.get("/matrix", async (c) => {
 
 // Can I Deploy endpoint
 app.get("/can-i-deploy", async (c) => {
-  const pacticipant = c.req.query("pacticipant");
-  const version = c.req.query("version");
-  const toTag = c.req.query("to") ?? c.req.query("toTag");
+  const pacticipantRaw = c.req.query("pacticipant");
+  const versionRaw = c.req.query("version");
+  const toRaw = c.req.query("to") ?? c.req.query("toTag");
 
-  if (!pacticipant || !version) {
+  if (!pacticipantRaw || !versionRaw) {
     return c.json(
       {
         error: "Bad Request",
@@ -64,8 +84,22 @@ app.get("/can-i-deploy", async (c) => {
     );
   }
 
+  const pacticipantResult = validateParam(c, nameSchema, pacticipantRaw, "pacticipant");
+  if (!pacticipantResult.valid) return pacticipantResult.response;
+  const pacticipant = pacticipantResult.value;
+
+  const versionResult = validateParam(c, versionSchema, versionRaw, "version");
+  if (!versionResult.valid) return versionResult.response;
+  const version = versionResult.value;
+
+  // 'to' can be either an environment name or a tag — both use the same permitted
+  // character set, so validate with environmentNameSchema if present (strictest).
+  const toResult = validateOptionalQuery(c, environmentNameSchema, toRaw, "to");
+  if (!toResult.valid) return toResult.response;
+  const toTag = toResult.value;
+
   const broker = getBroker(c.env);
-  const result = await broker.canIDeploy(pacticipant, version, toTag ?? undefined);
+  const result = await broker.canIDeploy(pacticipant, version, toTag);
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: CanIDeployResponse = {
