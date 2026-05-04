@@ -10,7 +10,7 @@ terraform {
       # v5.18 had the provider bug that required a
       # `lifecycle { ignore_changes = [environment] }` band-aid.
       # When Cloudflare cuts 5.19.0 stable, swap this to "~> 5.19".
-      version = "= 5.19.0-beta.5"
+      version = "5.19.1"
     }
     aws = {
       source  = "hashicorp/aws"
