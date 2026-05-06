@@ -61,19 +61,92 @@ in `wrangler.jsonc.tmpl` / `infra/main.tf` directly.
 
 ## Downstream forks
 
-This repo is the upstream for deployments of the Pact Broker. If your
-organisation maintains a deployment, keep a downstream fork and pull
-updates from here:
+This repo is the upstream for deployments of the Pact Broker. Operators
+who maintain a deployment keep a downstream fork and pull tagged
+releases from here. The full playbook for fork operators lives in
+[`docs/UPGRADING.md`](docs/UPGRADING.md).
 
-```bash
-git remote add upstream git@github.com:bison-digital/pact-broker-workers.git
-git fetch upstream
-git merge upstream/main          # or upstream/v1.2.3 for a specific tag
-```
+The fork holds only operator-specific config — `infra/backend.hcl`,
+`.envrc`, and GitHub Environment vars/secrets. Nothing committed
+upstream should need patching downstream. If you're tempted to commit
+something operator-specific to a fork, file an upstream issue first —
+the right shape is usually a new `TF_VAR_*` upstream so every operator
+benefits.
 
-The fork holds only your operator-specific config — `infra/backend.hcl`,
-`.envrc`, and GitHub Environment vars/secrets. Nothing committed upstream
-should need patching downstream.
+## Releases
+
+Upstream cuts tagged releases on `main`. Operators watch the
+[Releases page](https://github.com/bison-digital/pact-broker-workers/releases)
+to know when to sync.
+
+### Semver policy
+
+- **Major** (`v2.0.0`, `v3.0.0`) — breaking changes to the
+  operator-facing config surface: Terraform variables, GH Actions
+  vars/secrets, env vars, the bearer-token shape, the HAL API shape.
+  Operators must read the release notes and may need to update their
+  environment config.
+- **Minor** (`v1.3.0`, `v1.4.0`) — new features. Backwards-compatible.
+  Operators pull at their own cadence.
+- **Patch** (`v1.2.1`, `v1.2.2`) — bug fixes and security patches.
+  Operators pull promptly.
+
+### When to cut a tag
+
+After a meaningful PR (or set of PRs) merges to `main`. Not every PR
+needs a tag. Reasonable rhythms:
+
+- Bundle a few merged PRs into a minor release every 2-4 weeks if
+  there's been substantive change.
+- Cut a patch immediately for a security fix — don't wait for the
+  next minor.
+- Tag a major when introducing a breaking config change. Migration
+  notes go in the CHANGELOG entry.
+
+### Release procedure
+
+1. **Update `CHANGELOG.md`** with a new entry. Match the existing
+   shape: `## X.Y.Z — YYYY-MM-DD`, then `### Added`, `### Changed`,
+   `### Not included` (intentional follow-ups). Open this as a PR
+   alongside any other content for the release; merge via squash.
+
+2. **Tag from `main`** after the CHANGELOG PR is merged:
+
+   ```bash
+   git checkout main && git pull origin main
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+3. **Cut the GitHub Release.** The body is the CHANGELOG entry for
+   this version:
+
+   ```bash
+   gh release create vX.Y.Z \
+     --title "vX.Y.Z" \
+     --notes-from-tag
+   ```
+
+   Or paste the CHANGELOG section into the release body via the web
+   UI if you prefer. Either way, the release notes for `vX.Y.Z` should
+   render the same content as the `## X.Y.Z` block in CHANGELOG.
+
+4. **Bump `package.json`'s `version`** in a follow-up PR if you want
+   it to track. Some operators surface this value via
+   `process.env.npm_package_version`; others don't care. The CHANGELOG
+   and the git tag are the canonical version sources, not
+   `package.json`.
+
+### Operator notification
+
+There is no separate notification channel for releases. The GitHub
+Releases page is the canonical announcement — operators watch it via
+"Watch → Custom → Releases" on the GitHub UI. Don't email or DM
+operators about routine releases; the release notes do the work.
+
+For breaking releases, mention the breaking-change set in the
+CHANGELOG's `### Changed` heading clearly enough that an operator
+skimming the release page will spot it.
 
 ## Questions
 
