@@ -23,9 +23,18 @@ Cloudflare Worker (Hono + auth + CORS)
 - Zero external data store — all state in DO-local SQLite
 - Turnkey production deployment via Terraform + GitHub Actions
 
-### Not (yet) implemented
+## Documentation
 
-Webhooks, HAL Browser UI, matrix badge endpoint. See [`CHANGELOG.md`](CHANGELOG.md).
+| Doc | Audience | Use when |
+| --- | --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Operators, contributors | You want to understand the Worker + Durable Object topology, the request lifecycle, the auth model, or where to find a specific piece of code. |
+| [`docs/CICD.md`](docs/CICD.md) | Operators | Deploying, rolling back, configuring GitHub Environments, rotating the bearer token. |
+| [`docs/MONITORING.md`](docs/MONITORING.md) | Operators | What signals to watch (`/health`, access log, DO storage, Cloudflare analytics) and which alerts to set. |
+| [`docs/INCIDENT-RESPONSE.md`](docs/INCIDENT-RESPONSE.md) | On-call | Triage playbooks for the common failure modes: 401 spikes, payload-too-large, DO storage near cap, custom-domain unbinding, complete outage. |
+| [`docs/UPGRADING.md`](docs/UPGRADING.md) | Fork operators | Pulling tagged upstream releases into your fork. The manual sync playbook with worked examples and conflict-resolution guidance. |
+| [`docs/PUBLISH-ORDER.md`](docs/PUBLISH-ORDER.md) | Consumers / providers | Why consumer-pact publishing must precede provider PRs, and how to wire `can-i-deploy` to close the loop. |
+| [`infra/README.md`](infra/README.md) | Operators | Terraform inputs, AWS Secrets Manager bootstrap, plan/apply commands, backup considerations. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Maintainers, contributors | Local workflow, code style, infra-agnostic conventions, releases. |
 
 ## Quick start (local development)
 
@@ -85,14 +94,22 @@ This repository is the **upstream** for the Pact Broker product. To run the brok
 
 ### Staying in sync with upstream
 
+See [`docs/UPGRADING.md`](docs/UPGRADING.md) for the full playbook — the
+short version:
+
 ```bash
-git fetch upstream
-git merge upstream/main                    # latest
-# or:
-git merge upstream/v1.2.3                  # specific tagged release
+git fetch upstream --tags
+git tag -l 'v*' --sort=-v:refname | head -5
+git checkout -b sync/upstream-v1.3.0
+git merge v1.3.0
+# verify locally, push, open PR
 ```
 
-Because `infra/` is agnostic, these merges should be clean. If you get a conflict in `infra/`, something committed downstream shouldn't be there — it belongs in `.envrc` or a GitHub Environment variable. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the convention.
+Pull tagged releases (not raw `upstream/main`). Each tag has a GitHub
+Release whose body comes from [`CHANGELOG.md`](CHANGELOG.md) — read it
+before merging. Conflicts in `infra/` mean operator-specific values
+leaked into committed files; they belong in `.envrc` or GH Environment
+vars. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the convention.
 
 ## Configuration reference
 
