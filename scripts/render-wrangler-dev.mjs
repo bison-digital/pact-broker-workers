@@ -20,6 +20,10 @@ const vars = {
   allow_public_read: process.env.ALLOW_PUBLIC_READ ?? "false",
   cors_allowed_origins: process.env.CORS_ALLOWED_ORIGINS ?? "",
   public_badges: process.env.PUBLIC_BADGES ?? "true",
+  // Workers Rate Limiting thresholds (period is fixed at 60 s in the
+  // template). Defaults match the previous zone-level ruleset.
+  mutating_rate_limit_threshold: process.env.MUTATING_RATE_LIMIT_THRESHOLD ?? "60",
+  read_rate_limit_threshold: process.env.READ_RATE_LIMIT_THRESHOLD ?? "600",
 };
 
 const tmpl = readFileSync(resolve(repoRoot, "wrangler.jsonc.tmpl"), "utf8");

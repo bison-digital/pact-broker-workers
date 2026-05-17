@@ -41,7 +41,30 @@
     "ALLOW_PUBLIC_READ": "${allow_public_read}",
     "CORS_ALLOWED_ORIGINS": "${cors_allowed_origins}",
     "PUBLIC_BADGES": "${public_badges}"
-  }
+  },
+  // Workers Rate Limiting API — runs inside the Worker isolate, no
+  // zone-level Ruleset and no `Zone WAF: Edit` permission needed.
+  // Available on every Cloudflare plan including Free. Per-binding
+  // `namespace_id` is an account-scoped string identifying the counter
+  // group; 1001 / 1002 are reserved for this broker.
+  "ratelimits": [
+    {
+      "name": "MUTATING_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": ${mutating_rate_limit_threshold},
+        "period": 60
+      }
+    },
+    {
+      "name": "READ_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": ${read_rate_limit_threshold},
+        "period": 60
+      }
+    }
+  ]
   // The Worker's custom-domain binding is managed by Terraform
   // (infra/main.tf → cloudflare_workers_custom_domain.pact_broker).
   // Do not re-add a "routes" block here — wrangler would then call the
