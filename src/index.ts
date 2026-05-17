@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { Env, HonoEnv } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { indexRoutes } from "./routes/index";
@@ -61,20 +62,24 @@ app.use("*", async (c, next) => {
   );
 });
 
-// Request size limit middleware
-app.use("*", async (c, next) => {
-  const contentLength = c.req.header("Content-Length");
-  if (contentLength && parseInt(contentLength) > MAX_BODY_SIZE) {
-    return c.json(
-      {
-        error: "Payload Too Large",
-        message: `Request body exceeds maximum size of ${MAX_BODY_SIZE} bytes`,
-      },
-      413,
-    );
-  }
-  return next();
-});
+// Streaming body-size limit. Reads the request stream and rejects on
+// over-cap, so chunked encoding / missing Content-Length / non-numeric
+// Content-Length cases are all covered — the previous parseInt-based
+// guard silently passed any of those through.
+app.use(
+  "*",
+  bodyLimit({
+    maxSize: MAX_BODY_SIZE,
+    onError: (c) =>
+      c.json(
+        {
+          error: "Payload Too Large",
+          message: `Request body exceeds maximum size of ${MAX_BODY_SIZE} bytes`,
+        },
+        413,
+      ),
+  }),
+);
 
 // Content-Type validation for POST/PUT requests
 app.use("*", async (c, next) => {
