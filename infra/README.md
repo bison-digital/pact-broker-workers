@@ -155,12 +155,21 @@ The broker stores pacts, verifications, tags, and deployment history in the `Pac
 
 This project does not ship a snapshot/export mechanism today; call it out in your operational runbook.
 
-## Edge rate limiting
+## Rate limiting
 
-`main.tf` provisions a `cloudflare_ruleset` in the `http_ratelimit` phase with two rules (mutating / read), both scoped to the broker hostname and keyed by `ip.src`.
+Rate limiting is enforced inside the Worker via the Workers Rate Limiting API. Two bindings are declared in `wrangler.jsonc.tmpl` under the `ratelimits` block:
 
-- **Thresholds** — `mutating_rate_limit_threshold` (default 60/min) and `read_rate_limit_threshold` (default 600/min). Tune per deployment by overriding the vars.
-- **Kill switch** — `enable_rate_limiting = false` skips provisioning the ruleset. Use this on the Cloudflare free plan, which doesn't expose `rate_limit` actions in the standard `http_ratelimit` phase. The in-Worker body size (1 MB on `PUT /pacts`) and schema validation remain regardless.
+- **`MUTATING_RATE_LIMITER`** — gates `POST` / `PUT` / `PATCH` / `DELETE`. Threshold defaults to 60 requests per 60 s per client IP; override via `var.mutating_rate_limit_threshold`.
+- **`READ_RATE_LIMITER`** — gates everything else (`GET` / `HEAD` / `OPTIONS`). Threshold defaults to 600 requests per 60 s per client IP; override via `var.read_rate_limit_threshold`.
+
+The middleware (`src/middleware/rate-limit.ts`) sits ahead of auth, so a bearer-token brute-force attempt is rate-limited per IP even before the auth comparison runs. The `cf-connecting-ip` header is the limiter key — always present when running behind Cloudflare.
+
+Trade-off vs the previous zone-level `cloudflare_ruleset`:
+
+- No `Zone WAF: Edit` permission needed on the deploy API token (just `Workers Scripts: Edit`, which the deploy already has). Smaller blast radius if the token leaks.
+- Works on every Cloudflare plan including Free — the previous ruleset required Pro+ for the `rate_limit` action.
+- One source of truth: rate-limit config lives next to every other Worker binding in `wrangler.jsonc`, not split across Terraform.
+- Rate-limited requests *do* reach the Worker isolate (vs the previous edge-block before isolate-start), but the cost is microseconds — irrelevant at this Worker's request volume.
 
 ## Runtime environment variables
 

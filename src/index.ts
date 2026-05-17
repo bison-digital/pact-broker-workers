@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Env, HonoEnv } from "./types";
 import { authMiddleware } from "./middleware/auth";
+import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { indexRoutes } from "./routes/index";
 import { pacticipantRoutes } from "./routes/pacticipants";
 import { pactRoutes } from "./routes/pacts";
@@ -156,6 +157,12 @@ function isPublicPath(path: string, env: Env): boolean {
   }
   return false;
 }
+
+// Rate limiting (per-IP via Workers Rate Limiting API). Sits before
+// auth so that bearer-token brute-force attempts get rate-limited
+// even when they fail auth, but after body-limit + content-type so a
+// 100MB junk POST is rejected before consuming a limiter slot.
+app.use("*", rateLimitMiddleware);
 
 // Auth middleware (applied to all routes except public ones above)
 app.use("*", async (c, next) => {

@@ -57,20 +57,14 @@ variable "allow_public_read" {
   }
 }
 
-variable "enable_rate_limiting" {
-  description = "If true, provision an edge Cloudflare rate-limit ruleset in front of the Worker. Requires a Cloudflare plan that exposes the rate_limit action in http_ratelimit (Pro+). Set to false on the free plan and rely on the in-Worker body-size + validation caps."
-  type        = bool
-  default     = true
-}
-
 variable "mutating_rate_limit_threshold" {
-  description = "Max mutating requests per client IP per minute before the ratelimit rule fires."
+  description = "Max mutating requests (POST/PUT/PATCH/DELETE) per client IP per 60 s window before the Worker returns 429. Flows into wrangler.jsonc → ratelimits → MUTATING_RATE_LIMITER.simple.limit."
   type        = number
   default     = 60
 }
 
 variable "read_rate_limit_threshold" {
-  description = "Max read requests per client IP per minute before the ratelimit rule fires."
+  description = "Max read requests (GET/HEAD/OPTIONS) per client IP per 60 s window before the Worker returns 429. Flows into wrangler.jsonc → ratelimits → READ_RATE_LIMITER.simple.limit."
   type        = number
   default     = 600
 }

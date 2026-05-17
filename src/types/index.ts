@@ -9,6 +9,12 @@ export interface Env {
   PUBLIC_BADGES?: string;
   // Comma-separated list of allowed CORS origins. Empty/unset = permissive (legacy).
   CORS_ALLOWED_ORIGINS?: string;
+  // Workers Rate Limiting API bindings. Both are configured in
+  // wrangler.jsonc.tmpl under `ratelimits`. The middleware no-ops
+  // gracefully when these are absent (e.g. in unit tests that don't
+  // load the binding).
+  MUTATING_RATE_LIMITER?: RateLimit;
+  READ_RATE_LIMITER?: RateLimit;
 }
 
 // Per-request variables we stash on the Hono context. Keep this narrow so the
