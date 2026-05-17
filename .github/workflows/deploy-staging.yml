@@ -52,6 +52,13 @@ jobs:
       TF_VAR_domain: ${{ vars.DOMAIN }}
       TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
       TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
+      # Pass-through for the rate-limit toggle (infra/variables.tf
+      # var.enable_rate_limiting). Default `true` matches the TF
+      # default, so forks on Pro+ with `Zone WAF: Edit` on the API
+      # token keep the protection automatically. Forks on the free
+      # plan, or operators whose token lacks the scope, set the GH
+      # variable ENABLE_RATE_LIMITING=false to opt out.
+      TF_VAR_enable_rate_limiting: ${{ vars.ENABLE_RATE_LIMITING || 'true' }}
     steps:
       - uses: actions/checkout@v5
 
