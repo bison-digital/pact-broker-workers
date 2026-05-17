@@ -67,7 +67,8 @@ export const authMiddleware = createMiddleware<HonoEnv>(async (c, next) => {
 
   const [scheme, token] = authHeader.split(" ");
 
-  if (scheme !== "Bearer" || !token) {
+  // RFC 6750 §2.1: the auth scheme is case-insensitive ("Bearer" / "bearer" / "BEARER").
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
     return c.json(
       {
         error: "Unauthorized",
