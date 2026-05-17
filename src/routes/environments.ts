@@ -45,7 +45,7 @@ app.get("/:name", async (c) => {
   const env = await broker.getEnvironment(name);
 
   if (!env) {
-    return c.json({ error: "Not Found", message: `Environment '${name}' not found` }, 404);
+    return c.json({ error: "Not Found", message: "Environment not found" }, 404);
   }
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));

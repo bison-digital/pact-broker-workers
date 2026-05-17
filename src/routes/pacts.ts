@@ -50,7 +50,24 @@ function buildPactResponse(
   provider: { name: string },
   version: { number: string },
 ): PactResponse {
-  const content = JSON.parse(pact.content) as PactContent;
+  // Defensive parse: a stored pact with corrupt content shouldn't brick
+  // every subsequent GET. Fall back to an empty interactions list and
+  // log the failure server-side instead of throwing into the global
+  // error handler.
+  let content: PactContent;
+  try {
+    content = JSON.parse(pact.content) as PactContent;
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        msg: "buildPactResponse: failed to parse stored pact content",
+        contentSha: pact.contentSha,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    content = { interactions: [], metadata: {} } as unknown as PactContent;
+  }
 
   return {
     consumer: { name: consumer.name },
