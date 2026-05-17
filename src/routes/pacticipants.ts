@@ -182,13 +182,7 @@ app.get("/:name/versions/:version/tags/:tag", async (c) => {
   const tag = await broker.getTag(name, versionNumber, tagName);
 
   if (!tag) {
-    return c.json(
-      {
-        error: "Not Found",
-        message: `Tag '${tagName}' not found for version '${versionNumber}' of pacticipant '${name}'`,
-      },
-      404,
-    );
+    return c.json({ error: "Not Found", message: "Tag not found" }, 404);
   }
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -220,13 +214,7 @@ app.put("/:name/versions/:version/tags/:tag", async (c) => {
   // Ensure version exists first
   const version = await broker.getVersion(name, versionNumber);
   if (!version) {
-    return c.json(
-      {
-        error: "Not Found",
-        message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
-      },
-      404,
-    );
+    return c.json({ error: "Not Found", message: "Version not found" }, 404);
   }
 
   const tag = await broker.addTag(name, versionNumber, tagName);
@@ -302,13 +290,7 @@ app.put("/:name/versions/:version/deployed/:environment", async (c) => {
   // Ensure version exists first
   const version = await broker.getVersion(name, versionNumber);
   if (!version) {
-    return c.json(
-      {
-        error: "Not Found",
-        message: `Version '${versionNumber}' not found for pacticipant '${name}'`,
-      },
-      404,
-    );
+    return c.json({ error: "Not Found", message: "Version not found" }, 404);
   }
 
   const deployment = await broker.recordDeployment(name, versionNumber, environmentName);
@@ -352,13 +334,7 @@ app.delete("/:name/versions/:version/deployed/:environment", async (c) => {
   const success = await broker.recordUndeployment(name, versionNumber, environmentName);
 
   if (!success) {
-    return c.json(
-      {
-        error: "Not Found",
-        message: `No active deployment found for version '${versionNumber}' in environment '${environmentName}'`,
-      },
-      404,
-    );
+    return c.json({ error: "Not Found", message: "No active deployment found" }, 404);
   }
 
   return c.body(null, 204);
