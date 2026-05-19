@@ -69,6 +69,17 @@ All inputs come from environment variables. CI sets them via GitHub Actions vars
 | --- | --- |
 | `SMOKE_TEST_BROKER_TOKEN` | Optional: authenticated smoke test on deploys. Matches the value seeded into `<secrets_prefix>/<workspace>/pact-broker-token`. |
 
+### Cloudflare Access (optional perimeter)
+
+Off by default. The deploy workflows pass `TF_VAR_access_policy_mode` and `TF_VAR_access_service_token_id` from per-environment GH vars when set; when unset they default to empty strings and the [`infra/access.tf`](access.tf) resources are not provisioned.
+
+| Var | TF var | Values |
+| --- | --- | --- |
+| `ACCESS_POLICY_MODE` | `access_policy_mode` | `""` (default — disabled) · `"pinned_token"` (admits only `access_service_token_id`) · `"any_valid_token"` (admits any account service token) |
+| `ACCESS_SERVICE_TOKEN_ID` | `access_service_token_id` | Cloudflare service-token UUID. Required when `ACCESS_POLICY_MODE` is `"pinned_token"`. |
+
+Service tokens are issued **manually** via the Cloudflare dashboard (or a separate token-only Terraform pass), never by this CI. That keeps the credential-minting capability `Access: Service Tokens: Edit` out of the CI Cloudflare API token — `Access: Apps and Policies: Edit` is enough.
+
 ### Local `.envrc` (gitignored; loaded via [direnv](https://direnv.net/))
 
 Matches the GH Actions values above. Every `vars.X` becomes `export TF_VAR_<snake>=…`. Example for a staging workspace:

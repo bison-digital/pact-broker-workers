@@ -81,6 +81,31 @@ variable "public_badges" {
   default     = "true"
 }
 
+# ─── Cloudflare Access (opt-in, default OFF) ─────────────────────
+# When access_policy_mode == "" the Access application + policy
+# resources in infra/access.tf are NOT provisioned and the broker
+# stays reachable behind only the Worker's bearer-token check.
+
+variable "access_policy_mode" {
+  description = "Cloudflare Access policy posture. \"\" disables the perimeter entirely (default — no Access resources provisioned). \"pinned_token\" admits only the specific access_service_token_id. \"any_valid_token\" admits any service token issued in the account."
+  type        = string
+  default     = ""
+  validation {
+    condition     = contains(["", "pinned_token", "any_valid_token"], var.access_policy_mode)
+    error_message = "access_policy_mode must be \"\" (disabled), \"pinned_token\", or \"any_valid_token\"."
+  }
+}
+
+variable "access_service_token_id" {
+  description = "Cloudflare Access service-token UUID admitted by the access policy when access_policy_mode == \"pinned_token\". Service tokens are issued manually via the Cloudflare dashboard, never by CI."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.access_policy_mode != "pinned_token" || length(trimspace(var.access_service_token_id)) > 0
+    error_message = "access_service_token_id must be set when access_policy_mode is \"pinned_token\"."
+  }
+}
+
 # The Worker's bearer token (PACT_BROKER_TOKEN) is NOT a Terraform
 # variable — it lives in AWS Secrets Manager under
 # `<secrets_prefix>/<workspace>/pact-broker-token` and is read at apply
