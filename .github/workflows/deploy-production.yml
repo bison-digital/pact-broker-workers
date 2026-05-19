@@ -46,6 +46,11 @@ jobs:
       TF_VAR_domain: ${{ vars.DOMAIN }}
       TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
       TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
+      # Cloudflare Access perimeter (opt-in, default off). Unset GH
+      # variables emit empty strings, leaving the Terraform defaults
+      # in place → no Access resources provisioned.
+      TF_VAR_access_policy_mode: ${{ vars.ACCESS_POLICY_MODE || '' }}
+      TF_VAR_access_service_token_id: ${{ vars.ACCESS_SERVICE_TOKEN_ID || '' }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -113,6 +118,11 @@ jobs:
       TF_VAR_domain: ${{ vars.DOMAIN }}
       TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
       TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
+      # Cloudflare Access perimeter (opt-in, default off). Unset GH
+      # variables emit empty strings, leaving the Terraform defaults
+      # in place → no Access resources provisioned.
+      TF_VAR_access_policy_mode: ${{ vars.ACCESS_POLICY_MODE || '' }}
+      TF_VAR_access_service_token_id: ${{ vars.ACCESS_SERVICE_TOKEN_ID || '' }}
     steps:
       - uses: actions/checkout@v6
 

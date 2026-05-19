@@ -123,6 +123,7 @@ vars. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the convention.
 Edge-level mitigations provisioned by Terraform:
 
 - **Rate limiting** — two rulesets on the broker hostname: mutating requests (`PUT`/`POST`/`DELETE`) are capped at `mutating_rate_limit_threshold` per IP per minute; reads at `read_rate_limit_threshold`. Both gated by `enable_rate_limiting` (default `true`). Requires a CF plan that supports the `http_ratelimit` phase (Pro+); disable on free tier.
+- **Cloudflare Access (optional, default OFF)** — when `access_policy_mode` is set to `"pinned_token"` or `"any_valid_token"`, a service-token policy in front of the custom domain rejects unauthenticated traffic at the edge. The Worker's bearer-token check runs as an independent second layer behind it. Default `""` provisions no Access resources. See [`SECURITY.md`](SECURITY.md) and [`infra/README.md`](infra/README.md#cloudflare-access-optional-perimeter).
 
 ## API reference
 
