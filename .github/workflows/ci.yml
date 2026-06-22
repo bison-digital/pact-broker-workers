@@ -15,7 +15,7 @@ jobs:
     name: Lint, Test, and Type-check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
@@ -31,7 +31,7 @@ jobs:
     name: Guard — no routes block in wrangler.jsonc.tmpl
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail if wrangler.jsonc.tmpl contains a routes block
         run: |
           if grep -E '^\s*"routes"\s*:' wrangler.jsonc.tmpl; then
@@ -51,7 +51,7 @@ jobs:
     # (the upstream can't plan without operator-specific credentials).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.14.8"
@@ -97,7 +97,7 @@ jobs:
       TF_VAR_access_policy_mode: ${{ vars.ACCESS_POLICY_MODE || '' }}
       TF_VAR_access_service_token_id: ${{ vars.ACCESS_SERVICE_TOKEN_ID || '' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: hashicorp/setup-terraform@v4
         with:
