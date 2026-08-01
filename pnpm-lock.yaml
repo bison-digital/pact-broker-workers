@@ -12,8 +12,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260801.1)
       hono:
-        specifier: ^4.12.18
-        version: 4.12.19
+        specifier: ^4.12.33
+        version: 4.12.33
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -1120,8 +1120,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  hono@4.12.19:
-    resolution: {integrity: sha512-xa3eYXYXx68XTT4hZ7dRzsXBhaq85ToSrlUJNoR0gwz/1Ap/CNwX47wfvV7pc/xWhjKVVkLT7zBJy8chhNguqQ==}
+  hono@4.12.33:
+    resolution: {integrity: sha512-+SwvkaiJtxsiPjhy9LivY/1m7UsNqCJetM1BrZl9A5DkQhlbHQDU730mMiDPWjnoCYOM8Chf3WrCJw27kNTPFQ==}
     engines: {node: '>=16.9.0'}
 
   kleur@4.1.5:
@@ -2019,7 +2019,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  hono@4.12.19: {}
+  hono@4.12.33: {}
 
   kleur@4.1.5: {}
 

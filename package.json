@@ -33,7 +33,7 @@
   "license": "MIT",
   "dependencies": {
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.18",
+    "hono": "^4.12.33",
     "zod": "^4.4.3"
   },
   "devDependencies": {
