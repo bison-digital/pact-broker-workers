@@ -15,48 +15,21 @@ locals {
   src_files = [for f in sort(fileset("${local.worker_dir}/src", "**/*")) : "${local.worker_dir}/src/${f}"]
 
   source_hash = sha256(join("", [for f in local.src_files : filesha256(f)]))
-
-  # Secret names are static so they can be used as for_each keys (Terraform
-  # disallows sensitive values in for_each keys). The values are passed into
-  # the provisioner environment, never into the key.
-  secret_names = toset(["PACT_BROKER_TOKEN"])
-
-  # Sourced from AWS Secrets Manager (see secrets.tf). Secrets are not
-  # Terraform inputs — they're operator-managed values Terraform reads at
-  # apply time and pushes to the Worker.
-  secret_values = {
-    PACT_BROKER_TOKEN = data.aws_secretsmanager_secret_version.pact_broker_token.secret_string
-  }
 }
 
-# ─── Worker secrets ──────────────────────────────────────────────
-# Each secret is set via `printf | wrangler secret put`.
-# Re-runs when EITHER the secret value OR the wrangler command changes —
-# the command hash catches wrangler-flag fixes so they take effect on the
-# next apply without needing an out-of-band value rotation.
-
-locals {
-  worker_secret_command = "printf '%s' \"$SECRET_VALUE\" | npx wrangler secret put $SECRET_NAME ${local.wrangler_target_flag}"
-}
-
-resource "terraform_data" "worker_secret" {
-  for_each = local.secret_names
-
-  triggers_replace = {
-    value_hash   = sha256(local.secret_values[each.key])
-    command_hash = sha256(local.worker_secret_command)
-  }
-
-  provisioner "local-exec" {
-    working_dir = local.worker_dir
-    command     = local.worker_secret_command
-    environment = {
-      SECRET_NAME          = each.key
-      SECRET_VALUE         = local.secret_values[each.key]
-      CLOUDFLARE_API_TOKEN = var.cloudflare_api_token
-    }
-  }
-}
+# ─── Worker secrets: deliberately not managed here ───────────────
+#
+# Terraform does not read, write, or hash PACT_BROKER_TOKEN. Worker secrets
+# are durable across deploys, so there is no invariant to converge — and
+# converging one would mean the apply (and therefore CI) needed read access
+# to wherever the value lives. That is precisely how this project ended up
+# with an AWS Secrets Manager dependency, and why it no longer has one.
+#
+# Seed once per Worker, from a workstation or the Cloudflare dashboard:
+#
+#   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker_name>
+#
+# See the note at the bottom of variables.tf.
 
 # ─── Materialised wrangler.jsonc ─────────────────────────────────
 # Generated per workspace from wrangler.jsonc.tmpl, filled with values from
@@ -84,10 +57,7 @@ resource "terraform_data" "worker_deploy" {
     wrangler_jsonc = local_file.wrangler_config.content_sha256
   }
 
-  depends_on = [
-    terraform_data.worker_secret,
-    local_file.wrangler_config,
-  ]
+  depends_on = [local_file.wrangler_config]
 
   provisioner "local-exec" {
     working_dir = local.worker_dir

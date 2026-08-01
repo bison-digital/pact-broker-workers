@@ -3,18 +3,8 @@ terraform {
 
   required_providers {
     cloudflare = {
-      source = "cloudflare/cloudflare"
-      # Pinned exact to 5.19.0-beta.5 to pick up the
-      # `cloudflare_workers_custom_domain.environment` fix (attribute
-      # is now `Computed`, no longer forces replacement on drift).
-      # v5.18 had the provider bug that required a
-      # `lifecycle { ignore_changes = [environment] }` band-aid.
-      # When Cloudflare cuts 5.19.0 stable, swap this to "~> 5.19".
-      version = "= 5.19.0-beta.5"
-    }
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.22"
     }
     local = {
       source  = "hashicorp/local"
@@ -22,12 +12,18 @@ terraform {
     }
   }
 
-  # Backend uses partial configuration: bucket / key / region come from a
-  # `-backend-config=backend.hcl` flag at `terraform init`. Each operator
-  # points Terraform at their own state bucket without editing this file.
-  # See infra/backend.hcl.example.
+  # State backend. `s3` here means the S3 *protocol*, not Amazon S3 — this
+  # project's reference backend is a Cloudflare R2 bucket, so an operator
+  # needs nothing outside their Cloudflare account. Terraform has no native
+  # R2 backend, and the S3 protocol is the portable choice: the same block
+  # works against R2, MinIO, Backblaze B2, or Amazon S3 if that is what an
+  # operator already runs.
+  #
+  # Everything operator-specific (bucket, key, endpoint, and the skip_*
+  # flags an S3-compatible endpoint needs) comes from a
+  # `-backend-config=backend.hcl` flag at `terraform init`, so no operator
+  # ever edits this file. See infra/backend.hcl.example.
   backend "s3" {
-    use_lockfile         = true
     encrypt              = true
     workspace_key_prefix = "env"
   }
@@ -35,11 +31,4 @@ terraform {
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
-}
-
-# AWS provider — used to read the Worker's bearer-token secret from
-# Secrets Manager. Region defaults to eu-west-1 but is overridable per
-# workspace via TF_VAR_aws_region.
-provider "aws" {
-  region = var.aws_region
 }

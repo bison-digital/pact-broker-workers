@@ -24,23 +24,6 @@ variable "worker_name" {
   type        = string
 }
 
-variable "aws_region" {
-  description = "AWS region for the AWS provider (Secrets Manager reads)."
-  type        = string
-  default     = "eu-west-1"
-}
-
-variable "terraform_state_bucket" {
-  description = "S3 bucket holding this project's Terraform state. MUST match the bucket configured in your backend.hcl. No default — required so operators can't accidentally write to the wrong bucket."
-  type        = string
-}
-
-variable "secrets_prefix" {
-  description = "Prefix under which Worker secrets are stored in AWS Secrets Manager. Full path resolves to `<prefix>/<workspace>/pact-broker-token`. Override per operator so multiple deployments in the same AWS account don't collide."
-  type        = string
-  default     = "pact-broker"
-}
-
 variable "wrangler_compatibility_date" {
   description = "compatibility_date written into the materialised wrangler.jsonc. Bump when you want the Worker to opt into newer Workers runtime behaviour."
   type        = string
@@ -87,7 +70,17 @@ variable "public_badges" {
   default     = "true"
 }
 
-# The Worker's bearer token (PACT_BROKER_TOKEN) is NOT a Terraform
-# variable — it lives in AWS Secrets Manager under
-# `<secrets_prefix>/<workspace>/pact-broker-token` and is read at apply
-# time. See secrets.tf.
+# The Worker's bearer token (PACT_BROKER_TOKEN) is deliberately NOT a
+# Terraform variable, and Terraform never reads it.
+#
+# Cloudflare Worker secrets are durable and survive every deploy — wrangler
+# only removes one on an explicit `wrangler secret delete`. So there is
+# nothing for Terraform to converge: the token is seeded once, out of band,
+# and rotated when an operator decides to rotate it.
+#
+#   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker_name>
+#
+# Keeping the value out of the apply path is what lets CI hold no secret
+# store credentials at all. `wrangler.jsonc.tmpl` declares the token under
+# `secrets.required`, so `wrangler deploy` fails loudly if a Worker was
+# never seeded rather than shipping an unauthenticated broker.
