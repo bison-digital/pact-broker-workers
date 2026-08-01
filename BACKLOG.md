@@ -35,34 +35,35 @@ Weekly updates configured for `npm`, `github-actions` (grouped), and `terraform`
 ### Secret scanning posture
 Verify GitHub's native secret scanning is enabled on this public repo (Settings → Code security). If a downstream fork publishes pre-review, a stray `PACT_BROKER_TOKEN` in a commit would ship. Consider also a `gitleaks-action` run in CI as a second line.
 
-### Worker bundle doubled under zod 4 (diagnosed, not fixed)
+### Worker bundle size — never use `import { z } from "zod"` (shipped)
 
-`wrangler deploy --dry-run` went from 435.91 KiB (81.29 KiB gzip) to 891.53 KiB
-(148.14 KiB gzip) across the 2.0.0 upgrade. Essentially all of it is zod:
+Fixed in 2.0.0, recorded because the failure mode is silent and easy to
+reintroduce.
 
-| segment | size |
-| --- | --- |
-| zod locales (every language it ships) | 278.7 KiB |
-| zod core + classic | 217.9 KiB |
-| zod JSON-Schema conversion | 48.1 KiB |
-| drizzle-orm | 167.3 KiB |
-| `src/` | 99.9 KiB |
-| hono | 64.6 KiB |
+zod 4 briefly doubled the bundle to 891.53 KiB (148.14 KiB gzip), of which
+278.7 KiB was **locale files for every language zod ships** and 48.1 KiB was
+JSON-Schema conversion. Neither is used: every validation message here is a
+custom English string, and nothing calls `toJSONSchema`.
 
-The locales and the JSON-Schema machinery are dead weight here — every
-validation message in `src/lib/validation.ts` is a custom English string, and
-nothing calls `toJSONSchema`.
+zod declares `sideEffects: false`, so it was not a bundler misconfiguration.
+`import { z } from "zod"` pulls the whole namespace, which makes `z.locales` a
+reachable property that esbuild cannot drop. Named imports
+(`import { object, string, enum as zEnum } from "zod"`) fix it:
 
-zod declares `sideEffects: false`, so this is not a bundler misconfiguration.
-The cause is `import { z } from "zod"`: pulling the whole `z` namespace makes
-`z.locales` a reachable property, so esbuild cannot drop it. Switching to
-named imports (`import { string, object } from "zod"`) should let it
-tree-shake, at the cost of touching every validator call site in
-`src/lib/validation.ts` and `src/routes/webhooks.ts`.
+| | before | after |
+| --- | --- | --- |
+| total upload | 891.53 KiB | **483.69 KiB** |
+| gzipped | 148.14 KiB | **93.92 KiB** |
+| zod's share | 544.7 KiB | **141.4 KiB** |
+| zod locales | 278.7 KiB | **0 KiB** |
 
-**Not urgent.** Workers limits are on the gzipped size — 148 KiB against 3 MB
-(free) / 10 MB (paid) — so this is a cold-start/parse-time consideration, not
-a deployment risk. Worth doing when someone is next in those files.
+**Keep validators on named imports.** A single `import { z } from "zod"`
+anywhere in `src/` puts all 279 KiB of locales back, and nothing in CI will
+tell you — the bundle-size check that would catch it does not exist yet.
+
+Largest remaining dependency is drizzle-orm at 167.3 KiB. Worth a look only
+if bundle size ever becomes a real constraint; Workers limits apply to the
+gzipped size, so 94 KiB sits against a 3 MB free-plan ceiling.
 
 ## Operational gaps
 

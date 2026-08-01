@@ -1,5 +1,8 @@
 import { Hono } from "hono";
-import { z } from "zod";
+// Named imports, deliberately — NOT `import { z } from "zod"`. The namespace
+// import makes `z.locales` reachable, which pins 279 KiB of locale files
+// (every language zod ships) into the Worker bundle. See BACKLOG.md.
+import { array, boolean, enum as zEnum, object, record, string } from "zod";
 import type { Env, WebhookEvent, WebhookResponse, WebhookExecutionResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 import { idSchema, parseId, validateParam } from "../lib/validation";
@@ -11,31 +14,29 @@ function getBroker(env: Env) {
   return env.PACT_BROKER.get(id);
 }
 
-const webhookCreateSchema = z.object({
-  events: z
-    .array(z.enum(["contract_published", "provider_verification_published"]))
-    .min(1, "events must contain at least one event"),
-  url: z
-    .string()
+const webhookCreateSchema = object({
+  events: array(zEnum(["contract_published", "provider_verification_published"])).min(
+    1,
+    "events must contain at least one event",
+  ),
+  url: string()
     .url("url must be a valid URL")
     .refine((u) => u.startsWith("https://"), {
       message: "url must use https",
     }),
-  method: z.enum(["POST", "PUT", "PATCH"]).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  body: z.string().nullable().optional(),
-  consumer: z
-    .string()
+  method: zEnum(["POST", "PUT", "PATCH"]).optional(),
+  headers: record(string(), string()).optional(),
+  body: string().nullable().optional(),
+  consumer: string()
     .regex(/^[a-zA-Z0-9._-]+$/)
     .nullable()
     .optional(),
-  provider: z
-    .string()
+  provider: string()
     .regex(/^[a-zA-Z0-9._-]+$/)
     .nullable()
     .optional(),
-  enabled: z.boolean().optional(),
-  description: z.string().max(500).optional(),
+  enabled: boolean().optional(),
+  description: string().max(500).optional(),
 });
 
 const webhookUpdateSchema = webhookCreateSchema.partial();
