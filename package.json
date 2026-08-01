@@ -10,8 +10,8 @@
     "deploy": "pnpm run render-config && wrangler deploy",
     "test": "pnpm run render-config && vitest",
     "test:run": "pnpm run render-config && vitest run",
-    "typecheck": "tsgo --noEmit",
-    "type-check": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
+    "type-check": "pnpm run typecheck",
     "lint": "oxlint --deny-warnings src test",
     "lint:fix": "oxlint --fix src test",
     "format": "oxfmt src test",
@@ -38,17 +38,15 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.0",
-    "@cloudflare/workers-types": "^4.20241205.0",
-    "@types/node": "^22.10.0",
-    "@typescript/native-preview": "7.0.0-dev.20260423.1",
-    "drizzle-kit": "^0.31.0",
+    "@cloudflare/workers-types": "^5.20260801.1",
+    "@types/node": "^26.1.2",
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^2.1.9",
-    "wrangler": "^3.93.0"
+    "wrangler": "^4.118.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.12.0"
   }
 }
