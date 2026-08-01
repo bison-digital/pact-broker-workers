@@ -27,7 +27,7 @@ Items found during a periodic audit of the upstream repo. Not blockers; filed so
 `infra/main.tf` now provisions a `cloudflare_ruleset` with two `http_ratelimit` rules (mutating vs read). Gated by `enable_rate_limiting` (default `true`) so operators on the free CF plan can disable it.
 
 ### Dependabot (shipped)
-Weekly updates configured for `npm`, `github-actions` (grouped), and `terraform` under `/infra` (see `.github/dependabot.yml`).
+Weekly updates for `npm` and `github-actions`, grouped by minor/patch and by major (see `.github/dependabot.yml`). The `terraform` ecosystem entry went with the deploy-time Terraform in 2.0.0; `infra/` is now an optional module CI never applies.
 
 ### GitHub Actions Node-20 deprecation (shipped)
 `actions/checkout` and `actions/setup-node` bumped to `@v5` across `ci.yml`, `deploy-staging.yml`, `deploy-production.yml`. `pnpm/action-setup` stays at `@v4` (no `@v5` published yet; Dependabot will catch it).
@@ -66,6 +66,6 @@ Integration + unit tests live under `test/` — auth middleware, input validatio
 
 ## Not goals (intentionally scoped out)
 
-- **Deploy-to-Cloudflare button.** Conflicts with the IaC-only invariant — all prod changes flow through Terraform.
+- **Deploy-to-Cloudflare button.** Production changes should flow through the reviewed pipeline, not a one-click deploy that bypasses the required-reviewer gate. (This previously cited an "IaC-only invariant"; that invariant went with Terraform in 2.0.0, but the reasoning stands on the gate alone.)
 - **Replicating the reference broker's exact internal schema.** This broker aims for client-wire compatibility (`pact-broker-client` works against it), not internal SQL compatibility.
 - **Horizontal scaling of the Durable Object.** Single-instance-per-broker is intentional; the workload is CI-volume, not user traffic, and DO-local SQLite is plenty.

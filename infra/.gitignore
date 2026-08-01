@@ -6,8 +6,6 @@
 crash.log
 crash.*.log
 
-# Operator-local backend config
-backend.hcl
 
 # Sensitive tfvars — real secrets live in CI env vars or a private vault
 *.secrets.tfvars

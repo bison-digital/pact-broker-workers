@@ -4,7 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
@@ -15,10 +15,7 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "noImplicitOverride": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist"]

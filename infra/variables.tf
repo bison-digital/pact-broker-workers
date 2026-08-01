@@ -1,90 +1,35 @@
+# Inputs for the optional Cloudflare Access module. Six variables, all of
+# which the two resources in access.tf consume directly.
+#
+# The Worker itself takes no Terraform inputs — it is deployed by
+# `wrangler deploy` and configured through environment variables read by
+# scripts/render-wrangler-config.mjs. See docs/CICD.md.
+
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with Workers Scripts, Workers Routes, and DNS edit rights on the zone that owns your chosen domain."
+  description = "Cloudflare API token used by the root module's provider. Needs only `Access: Apps and Policies: Edit` (account-scoped) for this module — deliberately NOT `Access: Service Tokens: Edit`, since service tokens are issued by hand (see access.tf)."
   type        = string
   sensitive   = true
 }
 
 variable "cloudflare_account_id" {
-  description = "Cloudflare account ID that owns the Worker."
-  type        = string
-}
-
-variable "cloudflare_zone_id" {
-  description = "Cloudflare zone ID for the zone you'll point at the Worker."
-  type        = string
-}
-
-variable "domain" {
-  description = "Custom domain the Worker binds to (e.g. pact-broker-staging.your-domain.com)."
+  description = "Cloudflare account ID. Both Access resources are account-scoped."
   type        = string
 }
 
 variable "worker_name" {
-  description = "Name of the Cloudflare Worker (matches wrangler.jsonc name field per env)."
+  description = "Name of the Cloudflare Worker. Used as the name of the Access application and policy so they are identifiable per environment."
   type        = string
 }
 
-variable "aws_region" {
-  description = "AWS region for the AWS provider (Secrets Manager reads)."
+variable "domain" {
+  description = "Hostname the Access application sits in front of — the same custom domain the Worker is bound to (e.g. pact-broker.your-domain.com)."
   type        = string
-  default     = "eu-west-1"
-}
-
-variable "terraform_state_bucket" {
-  description = "S3 bucket holding this project's Terraform state. MUST match the bucket configured in your backend.hcl. No default — required so operators can't accidentally write to the wrong bucket."
-  type        = string
-}
-
-variable "secrets_prefix" {
-  description = "Prefix under which Worker secrets are stored in AWS Secrets Manager. Full path resolves to `<prefix>/<workspace>/pact-broker-token`. Override per operator so multiple deployments in the same AWS account don't collide."
-  type        = string
-  default     = "pact-broker"
-}
-
-variable "wrangler_compatibility_date" {
-  description = "compatibility_date written into the materialised wrangler.jsonc. Bump when you want the Worker to opt into newer Workers runtime behaviour."
-  type        = string
-  default     = "2026-04-15"
-}
-
-variable "allow_public_read" {
-  description = "If true, GET/HEAD requests on the broker bypass the bearer-token check. Default false."
-  type        = string
-  default     = "false"
-  validation {
-    condition     = contains(["true", "false"], var.allow_public_read)
-    error_message = "allow_public_read must be the string \"true\" or \"false\" (Workers env vars are strings)."
-  }
-}
-
-variable "mutating_rate_limit_threshold" {
-  description = "Max mutating requests (POST/PUT/PATCH/DELETE) per client IP per 60 s window before the Worker returns 429. Flows into wrangler.jsonc → ratelimits → MUTATING_RATE_LIMITER.simple.limit."
-  type        = number
-  default     = 60
-}
-
-variable "read_rate_limit_threshold" {
-  description = "Max read requests (GET/HEAD/OPTIONS) per client IP per 60 s window before the Worker returns 429. Flows into wrangler.jsonc → ratelimits → READ_RATE_LIMITER.simple.limit."
-  type        = number
-  default     = 600
-}
-
-variable "cors_allowed_origins" {
-  description = "Comma-separated list of origins that may make cross-origin browser requests to the broker. Empty/unset = permissive (legacy). Set once you host the HAL UI on a known domain."
-  type        = string
-  default     = ""
-}
-
-variable "public_badges" {
-  description = "If 'false', the SVG badge endpoint requires a bearer token. Any other value (including unset) leaves badges public."
-  type        = string
-  default     = "true"
 }
 
 # ─── Cloudflare Access (opt-in, default OFF) ─────────────────────
 # When access_policy_mode == "" the Access application + policy
-# resources in infra/access.tf are NOT provisioned and the broker
-# stays reachable behind only the Worker's bearer-token check.
+# resources in access.tf are NOT provisioned and the broker stays
+# reachable behind only the Worker's bearer-token check.
 
 variable "access_policy_mode" {
   description = "Cloudflare Access policy posture. \"\" disables the perimeter entirely (default — no Access resources provisioned). \"pinned_token\" admits only the specific access_service_token_id. \"any_valid_token\" admits any service token issued in the account."
@@ -106,7 +51,9 @@ variable "access_service_token_id" {
   }
 }
 
-# The Worker's bearer token (PACT_BROKER_TOKEN) is NOT a Terraform
-# variable — it lives in AWS Secrets Manager under
-# `<secrets_prefix>/<workspace>/pact-broker-token` and is read at apply
-# time. See secrets.tf.
+# The Worker's bearer token (PACT_BROKER_TOKEN) is not a Terraform variable
+# and Terraform never reads it. It is seeded once, out of band:
+#
+#   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker_name>
+#
+# Worker secrets survive every deploy, so there is nothing to converge.

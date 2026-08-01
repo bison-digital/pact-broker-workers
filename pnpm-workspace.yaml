@@ -1,0 +1,9 @@
+# pnpm settings. Not a monorepo — pnpm 10 moved these out of package.json's
+# "pnpm" field and this file is now their documented home.
+
+# pnpm 10 blocks package lifecycle scripts by default. Both of these ship a
+# postinstall that fetches or links a platform binary, and wrangler and the
+# vitest Workers pool are unusable without it.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

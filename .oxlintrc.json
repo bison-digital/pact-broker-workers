@@ -1,7 +1,31 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "rules": {
-    "unicorn/no-array-sort": "off"
+    "unicorn/no-array-sort": "off",
+    // `_links` and `_embedded` are mandated by the HAL specification — they
+    // are this broker's wire contract with pact-broker-client and cannot be
+    // renamed. `_result` in middleware/auth.ts is a deliberately discarded
+    // accumulator in timingSafeEqual's length-mismatch branch, existing only
+    // to burn constant time; the underscore is what marks it as thrown away.
+    //
+    // Allow-listed rather than the rule disabled, so it still catches
+    // accidental dangling underscores elsewhere.
+    "no-underscore-dangle": ["warn", { "allow": ["_links", "_embedded", "_result"] }],
+    // Type-aware rules — require `--type-aware` and the oxlint-tsgolint
+    // binary, both wired into the lint script. Deliberately a narrow pair:
+    // the Durable Object fires webhooks with retry loops and back-off timers,
+    // and a dropped promise there fails silently with no test to catch it.
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    // `--type-aware` enables the whole set, so these two are switched back off.
+    //
+    // no-unsafe-type-assertion — almost entirely in test/, where casting an
+    //   unknown JSON body to the shape under assertion IS the test.
+    // consistent-return — fires on CORS middleware returning a Response to
+    //   short-circuit an OPTIONS preflight and falling through otherwise,
+    //   which is the documented Hono middleware contract.
+    "typescript/no-unsafe-type-assertion": "off",
+    "typescript/consistent-return": "off"
   },
   "categories": {
     "correctness": "error",

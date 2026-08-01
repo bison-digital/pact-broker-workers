@@ -1,28 +1,22 @@
 {
   "name": "pact-broker-workers",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A lightweight Pact Broker running on Cloudflare Workers with Durable Objects",
   "type": "module",
   "packageManager": "pnpm@10.18.2",
   "scripts": {
-    "predev": "node scripts/render-wrangler-dev.mjs",
-    "dev": "wrangler dev",
-    "predeploy": "node scripts/render-wrangler-dev.mjs",
-    "deploy": "wrangler deploy",
-    "pretest": "node scripts/render-wrangler-dev.mjs",
-    "test": "vitest",
-    "pretest:run": "node scripts/render-wrangler-dev.mjs",
-    "test:run": "vitest run",
-    "typecheck": "tsgo --noEmit",
-    "type-check": "tsgo --noEmit",
-    "lint": "oxlint --deny-warnings src test",
-    "lint:fix": "oxlint --fix src test",
+    "render-config": "node scripts/render-wrangler-config.mjs",
+    "dev": "pnpm run render-config && wrangler dev",
+    "deploy": "pnpm run render-config && wrangler deploy",
+    "test": "pnpm run render-config && vitest",
+    "test:run": "pnpm run render-config && vitest run",
+    "typecheck": "tsc --noEmit",
+    "type-check": "pnpm run typecheck",
+    "lint": "oxlint --type-aware --deny-warnings src test",
+    "lint:fix": "oxlint --type-aware --fix src test",
     "format": "oxfmt src test",
     "format:check": "oxfmt --check src test",
-    "cf-typegen": "wrangler types",
-    "terraform:init": "terraform -chdir=infra init -backend-config=backend.hcl",
-    "terraform:plan": "terraform -chdir=infra plan",
-    "terraform:apply": "terraform -chdir=infra apply"
+    "cf-typegen": "wrangler types"
   },
   "keywords": [
     "pact",
@@ -39,22 +33,22 @@
   "license": "MIT",
   "dependencies": {
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.18",
-    "zod": "^3.24.0"
+    "hono": "^4.12.33",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.8.0",
-    "@cloudflare/workers-types": "^4.20241205.0",
-    "@types/node": "^22.10.0",
-    "@typescript/native-preview": "7.0.0-dev.20260423.1",
-    "drizzle-kit": "^0.31.0",
-    "oxfmt": "^0.42.0",
-    "oxlint": "^1.57.0",
-    "typescript": "^5.9.3",
-    "vitest": "^2.1.9",
-    "wrangler": "^3.93.0"
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
+    "@types/node": "^26.1.2",
+    "oxfmt": "^0.61.0",
+    "oxlint": "^1.76.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.118.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.12.0"
   }
 }

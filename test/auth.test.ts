@@ -5,7 +5,7 @@ describe("auth middleware", () => {
   it("/health is open (no auth required)", async () => {
     const res = await req("/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: "ok" });
+    expect(await res.json()).toEqual({ status: "ok", storage: "ok" });
   });
 
   it("missing Authorization header returns 401", async () => {

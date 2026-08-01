@@ -18,7 +18,6 @@ flowchart LR
     Client["Pact CLI clients<br/>pact-broker-client / pactflow-client<br/>provider verifiers"] -->|"HTTPS<br/>Authorization: Bearer …"| CF[Cloudflare edge]
     CF -->|"Worker invocation"| Worker["pact-broker-workers<br/>Hono + auth + CORS"]
     Worker -->|"single DO instance<br/>(idFromName('pact-broker'))"| DO["PactBrokerDO<br/>Durable Object<br/>(SQLite-backed)"]
-    SecretsMgr[("AWS Secrets Manager<br/>&lt;secrets_prefix&gt;/&lt;workspace&gt;/pact-broker-token")] -. read at terraform apply .-> Worker
     DO -. webhooks (best-effort) .-> External["Webhook targets<br/>(operator-defined HTTPS endpoints)"]
 ```
 
@@ -44,7 +43,7 @@ The trade-offs to understand:
 - **Storage cap.** DO SQLite tops out at ~10 GB per DO today.
   Operationally that's millions of pacts. If you approach the cap,
   reach for retention/pruning before reaching for a different store.
-- **Backups.** No automatic snapshot/export. See `infra/README.md` →
+- **Backups.** No automatic snapshot/export. See `BACKLOG.md` →
   "Backup considerations" and `docs/INCIDENT-RESPONSE.md` → "DO storage
   recovery".
 
@@ -95,10 +94,14 @@ links and embedded relation shapes.
 ## Auth model
 
 - One bearer token per Worker, named `PACT_BROKER_TOKEN`.
-- Source of truth: AWS Secrets Manager
-  (`<secrets_prefix>/<workspace>/pact-broker-token`). Terraform reads
-  the secret at apply time and pushes it into the Worker via
-  `wrangler secret put`. The token is never in HCL or `wrangler.jsonc`.
+- Source of truth: the Cloudflare Worker secret itself. Seeded once with
+  `wrangler secret put PACT_BROKER_TOKEN --name <worker>` and held nowhere
+  else — not in git, not in `wrangler.jsonc`, not in Terraform state, not in
+  CI. Worker secrets are durable across deploys, so there is no value to
+  re-push and nothing to converge.
+- `wrangler.jsonc.tmpl` declares the token under `secrets.required`, which
+  carries the *name* but never the value. `wrangler deploy` fails if the
+  Worker has no such secret set.
 - Optional `ALLOW_PUBLIC_READ=true` mode lets unauthenticated GET / HEAD
   through. Useful for read-only badge embedding or shared dashboards.
   Still rejects writes without auth.
@@ -131,7 +134,7 @@ substitutions for the resolved consumer / provider / version.
   point-in-time recovery should periodically dump via the API
   (`pact-broker-client` has dump/import commands) or via a custom
   worker invocation that streams the DO contents to R2 / S3.
-  See `infra/README.md` → "Backup considerations".
+  See `BACKLOG.md` → "Durable Object SQLite snapshot / export".
 
 ## Where to look
 
@@ -146,5 +149,7 @@ substitutions for the resolved consumer / provider / version.
 | Input validation (Zod schemas)          | `src/lib/validation.ts`                           |
 | HAL Browser UI (static HTML)            | `src/ui/index.ts`                                 |
 | Worker config template (rendered)       | `wrangler.jsonc.tmpl`                             |
-| Infra (Terraform)                       | `infra/` — see [`infra/README.md`](../infra/README.md) |
+| Deploy config                           | `wrangler.jsonc.tmpl` + `scripts/render-wrangler-config.mjs` |
+| CI / deploy workflows                   | `.github/workflows/` — see [`CICD.md`](CICD.md) |
+| Optional Access perimeter               | `infra/` — see [`infra/README.md`](../infra/README.md) |
 | CI / CD pipeline                        | [`docs/CICD.md`](CICD.md)                         |

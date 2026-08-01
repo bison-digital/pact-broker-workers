@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { z } from "zod";
+// Named imports, deliberately — see the note in src/lib/validation.ts.
+import { array, boolean, enum as zEnum, object, record, string } from "zod";
 import type { Env, WebhookEvent, WebhookResponse, WebhookExecutionResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 import { idSchema, parseId, validateParam } from "../lib/validation";
@@ -11,31 +12,29 @@ function getBroker(env: Env) {
   return env.PACT_BROKER.get(id);
 }
 
-const webhookCreateSchema = z.object({
-  events: z
-    .array(z.enum(["contract_published", "provider_verification_published"]))
-    .min(1, "events must contain at least one event"),
-  url: z
-    .string()
+const webhookCreateSchema = object({
+  events: array(zEnum(["contract_published", "provider_verification_published"])).min(
+    1,
+    "events must contain at least one event",
+  ),
+  url: string()
     .url("url must be a valid URL")
     .refine((u) => u.startsWith("https://"), {
       message: "url must use https",
     }),
-  method: z.enum(["POST", "PUT", "PATCH"]).optional(),
-  headers: z.record(z.string()).optional(),
-  body: z.string().nullable().optional(),
-  consumer: z
-    .string()
+  method: zEnum(["POST", "PUT", "PATCH"]).optional(),
+  headers: record(string(), string()).optional(),
+  body: string().nullable().optional(),
+  consumer: string()
     .regex(/^[a-zA-Z0-9._-]+$/)
     .nullable()
     .optional(),
-  provider: z
-    .string()
+  provider: string()
     .regex(/^[a-zA-Z0-9._-]+$/)
     .nullable()
     .optional(),
-  enabled: z.boolean().optional(),
-  description: z.string().max(500).optional(),
+  enabled: boolean().optional(),
+  description: string().max(500).optional(),
 });
 
 const webhookUpdateSchema = webhookCreateSchema.partial();
@@ -137,7 +136,7 @@ app.post("/", async (c) => {
   }
   const parsed = webhookCreateSchema.safeParse(raw);
   if (!parsed.success) {
-    const first = parsed.error.errors[0];
+    const first = parsed.error.issues[0];
     return c.json(
       {
         error: "Bad Request",
@@ -148,7 +147,7 @@ app.post("/", async (c) => {
   }
   const broker = getBroker(c.env);
   const hook = await broker.createWebhook({
-    events: parsed.data.events as WebhookEvent[],
+    events: parsed.data.events,
     url: parsed.data.url,
     method: parsed.data.method,
     headers: parsed.data.headers ?? null,
@@ -189,7 +188,7 @@ app.put("/:id", async (c) => {
   }
   const parsed = webhookUpdateSchema.safeParse(raw);
   if (!parsed.success) {
-    const first = parsed.error.errors[0];
+    const first = parsed.error.issues[0];
     return c.json(
       {
         error: "Bad Request",
@@ -200,7 +199,7 @@ app.put("/:id", async (c) => {
   }
   const broker = getBroker(c.env);
   const updated = await broker.updateWebhook(parseId(idResult.value), {
-    ...(parsed.data.events !== undefined && { events: parsed.data.events as WebhookEvent[] }),
+    ...(parsed.data.events !== undefined && { events: parsed.data.events }),
     ...(parsed.data.url !== undefined && { url: parsed.data.url }),
     ...(parsed.data.method !== undefined && { method: parsed.data.method }),
     ...(parsed.data.headers !== undefined && { headers: parsed.data.headers }),

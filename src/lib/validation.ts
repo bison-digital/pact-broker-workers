@@ -1,4 +1,7 @@
-import { z } from "zod";
+// Named imports, deliberately — NOT `import { z } from "zod"`. The namespace
+// import makes `z.locales` reachable, which pins ~279 KiB of locale files
+// (every language zod ships) into the Worker bundle. See BACKLOG.md.
+import { string, type ZodType } from "zod";
 import type { Context } from "hono";
 
 /**
@@ -7,8 +10,7 @@ import type { Context } from "hono";
  */
 
 // Pacticipant/Consumer/Provider names: alphanumeric, dots, hyphens, underscores
-export const nameSchema = z
-  .string()
+export const nameSchema = string()
   .min(1, "Name cannot be empty")
   .max(255, "Name exceeds 255 characters")
   .regex(
@@ -17,14 +19,12 @@ export const nameSchema = z
   );
 
 // Version strings: flexible format (semver, git SHA, dates, etc.)
-export const versionSchema = z
-  .string()
+export const versionSchema = string()
   .min(1, "Version cannot be empty")
   .max(255, "Version exceeds 255 characters");
 
 // Tag names: similar to names but slightly more permissive
-export const tagSchema = z
-  .string()
+export const tagSchema = string()
   .min(1, "Tag cannot be empty")
   .max(255, "Tag exceeds 255 characters")
   .regex(
@@ -33,8 +33,7 @@ export const tagSchema = z
   );
 
 // Branch names: similar to tags
-export const branchSchema = z
-  .string()
+export const branchSchema = string()
   .min(1, "Branch cannot be empty")
   .max(255, "Branch exceeds 255 characters")
   .regex(
@@ -43,14 +42,12 @@ export const branchSchema = z
   );
 
 // SHA-256 content hashes: exactly 64 hex characters
-export const shaSchema = z
-  .string()
+export const shaSchema = string()
   .length(64, "SHA must be exactly 64 characters")
   .regex(/^[a-f0-9]+$/i, "SHA must be a valid hexadecimal string");
 
 // Positive integer IDs (string input, string output for consistency)
-export const idSchema = z
-  .string()
+export const idSchema = string()
   .regex(/^\d+$/, "ID must be a positive integer")
   .refine((val) => parseInt(val, 10) > 0, "ID must be greater than 0");
 
@@ -63,8 +60,7 @@ export function parseId(idString: string): number {
 }
 
 // Environment names
-export const environmentNameSchema = z
-  .string()
+export const environmentNameSchema = string()
   .min(1, "Environment name cannot be empty")
   .max(100, "Environment name exceeds 100 characters")
   .regex(
@@ -78,14 +74,14 @@ export const environmentNameSchema = z
  */
 export function validateParam<T>(
   c: Context,
-  schema: z.ZodSchema<T>,
+  schema: ZodType<T>,
   value: string | undefined,
   paramName: string,
 ): { valid: true; value: T } | { valid: false; response: Response } {
   const result = schema.safeParse(value);
 
   if (!result.success) {
-    const errorMessage = result.error.errors[0]?.message || "Invalid input";
+    const errorMessage = result.error.issues[0]?.message || "Invalid input";
     return {
       valid: false,
       response: c.json(
@@ -108,7 +104,7 @@ export function validateParam<T>(
 export function validateParams(
   c: Context,
   validations: Array<{
-    schema: z.ZodSchema;
+    schema: ZodType;
     value: string | undefined;
     name: string;
   }>,
@@ -133,7 +129,7 @@ export function validateParams(
  */
 export function validateOptionalQuery<T>(
   c: Context,
-  schema: z.ZodSchema<T>,
+  schema: ZodType<T>,
   value: string | undefined,
   paramName: string,
 ): { valid: true; value: T | undefined } | { valid: false; response: Response } {

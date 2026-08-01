@@ -23,7 +23,8 @@ how releases are cut and tagged.
 Semver policy:
 
 - **Major** — breaking changes to the operator-facing config surface
-  (Terraform variables, GH Actions vars/secrets, env vars, the bearer
+  (GH Actions vars/secrets, the environment variables the config renderer
+  reads, the bearer
   token shape, the HAL API shape).
 - **Minor** — new features. Operators can pull at their own cadence.
 - **Patch** — bug fixes and security patches. Pull promptly.
@@ -88,10 +89,10 @@ gh pr create \
   --body "Merges bison-digital/pact-broker-workers v1.3.0. See upstream release notes: https://github.com/bison-digital/pact-broker-workers/releases/tag/v1.3.0"
 ```
 
-CI on the PR will run the full check suite plus `terraform plan` against
-your staging workspace (assuming `vars.INFRA_DEPLOY_ENABLED=true`).
-**Read the plan diff carefully** — it tells you what infrastructure
-changes the upstream release wants to make against your environments.
+CI on the PR runs the full check suite, plus a `config-renders` job that
+renders `wrangler.jsonc` with operator-shaped values and dry-runs a deploy.
+**Read the dry-run's binding list** — if the upstream release added or
+renamed a binding, that is where you see it before it reaches your Worker.
 
 After merge, your `deploy-staging.yml` runs automatically against the
 new SHA. Sanity-check staging (`/health`, `/ui`, a couple of pact
@@ -107,39 +108,54 @@ Most syncs are conflict-free. The places conflicts do show up:
 Upstream periodically bumps `compatibility_date`, adds new bindings, or
 adjusts the migrations block. Your fork shouldn't have edits here in
 the first place — the file is operator-agnostic by design and operator
-config flows through Terraform variables, not template edits.
+config flows through environment variables read by
+`scripts/render-wrangler-config.mjs`, not template edits.
 
 If a conflict appears here, **take upstream's version verbatim**. If
 you've genuinely customised the template (don't), the right pattern is
 to file an upstream issue describing why so the customisation can land
 upstream and become reusable.
 
-### `infra/main.tf`, `infra/variables.tf`
+### `scripts/render-wrangler-config.mjs`
 
-Upstream may add new Terraform variables or resources. Your fork
-shouldn't have edits in `infra/` — operator-specific values flow via
-`TF_VAR_*` environment variables. If you have a conflict here it's
-usually because you committed an `infra/*.tfvars` file (you shouldn't)
-or hand-edited a default value.
+Upstream may add new environment variables here. Your fork shouldn't have
+edits in this file — every operator-specific value is an env var with a
+local-dev default, so there is nothing to customise.
 
-If upstream adds a new `TF_VAR_*`, the conflict resolution is two-step:
+If upstream adds a variable, resolution is two-step:
 
-1. Take upstream's `infra/` version verbatim.
-2. After merging, set the new var in your `staging` and `production`
-   GitHub Environments (and in your local `.envrc` if you apply from a
-   workstation).
+1. Take upstream's version verbatim.
+2. After merging, set the new variable in your `staging` and `production`
+   GitHub Environments if you need a non-default value. The renderer's
+   defaults are chosen so that *not* setting it is always safe.
 
-The release notes call out new vars in the "Changed" section — check
-there before merging.
+### `infra/` (the optional Cloudflare Access module)
+
+Upstream may add variables or resources to the Access module. Your fork
+shouldn't have edits here — it's a Terraform module you consume from your own
+root configuration, so your provider, backend and state live outside this
+repo entirely.
+
+If a conflict appears, take upstream's version verbatim, then re-run your own
+`terraform plan` to see what it wants to change in your perimeter.
 
 ### `.github/workflows/`
 
-Workflows are operator-agnostic upstream. The deploy steps gate on
-`vars.INFRA_DEPLOY_ENABLED == 'true'` so they no-op on upstream and
-activate on operator forks — the workflow file itself doesn't need
-operator-specific edits.
+Two different things live here and they merge differently.
 
-If a conflict appears, take upstream's version verbatim.
+`ci.yml` is the upstream project's own gate. It holds no credentials and needs
+no configuration, so take upstream's version verbatim — a conflict here means
+you edited it, which you shouldn't.
+
+`deploy-staging.yml` and `deploy-production.yml` are a **reference
+implementation**. Upstream keeps them operator-agnostic — every value comes
+from GitHub Environment vars, and they skip entirely when unconfigured.
+
+If you have deliberately customised the deploy workflows for your organisation
+(extra approval steps, different notifications, a different trigger), that is
+legitimate — this is the one place a fork is expected to diverge. Merge
+upstream's changes selectively and keep your customisations. Everywhere else,
+take upstream verbatim.
 
 ### `package.json` / `pnpm-lock.yaml`
 
@@ -166,14 +182,16 @@ pnpm run type-check
 pnpm run test:run
 ```
 
-For infra changes, also run a local plan against staging:
+For deploy-config changes, render and dry-run with your own values:
 
 ```bash
-# Sources operator config from .envrc (gitignored)
-direnv allow
-terraform -chdir=infra init -backend-config=backend.hcl
-terraform -chdir=infra workspace select staging
-terraform -chdir=infra plan
+DOMAIN=pact-broker-staging.your-domain.com \
+WORKER_NAME=pact-broker-staging \
+CLOUDFLARE_ACCOUNT_ID=… \
+  pnpm run render-config
+
+# --dry-run needs no credentials and contacts nothing
+pnpm exec wrangler deploy --dry-run --outdir /tmp/preview
 ```
 
 If anything fails locally, fix it on the sync branch before pushing.

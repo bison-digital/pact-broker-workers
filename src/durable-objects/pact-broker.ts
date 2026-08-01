@@ -43,10 +43,41 @@ export class PactBrokerDO extends DurableObject<Env> {
     // Initialize Drizzle with DO storage
     this.db = drizzle(ctx.storage, { logger: false });
 
-    // Run migrations on construction
-    this.ctx.blockConcurrencyWhile(async () => {
+    // Run migrations on construction.
+    //
+    // Deliberately not awaited — a constructor cannot await, and this is the
+    // documented Cloudflare pattern: the runtime queues every incoming request
+    // behind this promise, so no handler observes a half-migrated schema.
+    // `void` marks the floating promise as intentional.
+    //
+    // If runMigrations throws, blockConcurrencyWhile rejects and the runtime
+    // tears down this DO instance rather than serving from a broken schema.
+    // That is the behaviour we want: failing construction beats answering
+    // queries against half-applied migrations.
+    void this.ctx.blockConcurrencyWhile(async () => {
       runMigrations(ctx.storage.sql);
     });
+  }
+
+  // ============ Health ============
+
+  /**
+   * Cheap liveness probe for `GET /health`.
+   *
+   * Reaching this method at all proves the DO woke and its constructor
+   * finished, which means `runMigrations` completed inside
+   * `blockConcurrencyWhile`. The query then proves the schema is actually
+   * there and SQLite is readable — `LIMIT 1` on an indexed table is O(1)
+   * regardless of how much data the broker holds.
+   *
+   * Deliberately NOT `getAllPacticipants()`: that is unbounded, and /health is
+   * public and unauthenticated.
+   *
+   * Throws if storage is unreachable; the caller turns that into a 503.
+   */
+  async healthCheck(): Promise<boolean> {
+    this.ctx.storage.sql.exec("SELECT 1 FROM pacticipants LIMIT 1").toArray();
+    return true;
   }
 
   // ============ Pacticipant Operations ============
