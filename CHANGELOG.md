@@ -2,6 +2,188 @@
 
 All notable changes to `pact-broker-workers`.
 
+## 2.0.0 — 2026-08-01
+
+Removes the AWS dependency that crept into the deployment path, removes the
+Terraform deploy layer with it, and brings the toolchain current.
+
+**Breaking for fork operators.** Deployment no longer uses Terraform; the
+required GitHub configuration changes completely. See
+[Migration](#migration-from-1x).
+
+### Removed
+
+- **AWS, entirely.** No AWS account, service, SDK, credential or
+  environment-variable name remains. It had arrived as an S3 Terraform state
+  backend, a Secrets Manager data source holding the bearer token, and static
+  IAM keys as repo secrets.
+
+  The root of it was `terraform_data.worker_secret`, which read the token on
+  every apply in order to hash it. Terraform is convergent, so asserting "the
+  Worker's secret matches the source of truth" meant the value had to pass
+  through the apply — which made CI a secret-reading principal and required
+  long-lived credentials. It also achieved nothing: Cloudflare Worker secrets
+  are durable and survive every deploy, so the loop re-pushed an unchanged
+  value each time.
+
+  Moving state to R2 was considered and rejected. It removes the AWS *account*
+  but not the AWS *strings* — `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are
+  hardcoded in the SDK credential chain Terraform's `s3` backend uses. Passing
+  credentials as backend config instead is worse: Terraform writes them in
+  plaintext into `.terraform/terraform.tfstate`.
+
+- **Terraform from the deploy path.** `infra/` is now an optional module (below)
+  rather than a root configuration every deploy had to run.
+
+- **`INFRA_DEPLOY_ENABLED`.** The flag existed because one set of workflows was
+  trying to be both the project's CI and an operator's CD. Those are separate
+  now, so nothing needs gating.
+
+- **`SMOKE_TEST_BROKER_TOKEN`.** The post-deploy smoke test no longer needs a
+  token. Delete this environment secret — it was a standing copy of a live
+  credential.
+
+- **`.envrc.example`**, the `terraform:*` npm scripts, the
+  `wrangler-routes-guard` CI job (it existed only to stop anyone re-adding a
+  `routes` block while Terraform owned routing), `drizzle-kit` (no config, no
+  migrations directory, nothing invoked it), and the unused `@/*` tsconfig
+  path alias.
+
+### Added
+
+- **Custom domain in wrangler config** — `routes: [{ custom_domain: true }]`.
+  Wrangler creates the DNS record and issues the certificate on deploy.
+- **`secrets.required` in `wrangler.jsonc.tmpl`.** Declares `PACT_BROKER_TOKEN`
+  by name without its value, so `wrangler deploy` fails if a Worker was never
+  seeded rather than shipping a broker that rejects every request. This
+  replaces the guarantee `worker_secret` used to provide.
+- **`/health` now probes the Durable Object**, returning
+  `{"status":"ok","storage":"ok"}` or a 503. It previously returned a static
+  literal, which proved only that the Worker booted. Since CI holds no token,
+  this is the deploy pipeline's only signal, so it has to mean something.
+- **Tokenless smoke test.** `/health` must report `storage: "ok"` and an
+  unauthenticated `/pacticipants` must return 401. The 401 assertion is new
+  coverage — nothing previously caught a broker serving data without auth.
+- **`ci.yml` gains a `config-renders` job** that renders with operator-shaped
+  values and dry-runs a deploy. The suite always renders without a `DOMAIN`, so
+  this is the only check on the operator path.
+- **`.oxfmtrc.json`** — formatting ran on implicit defaults, leaving every oxfmt
+  release free to restyle the repo. Pins current style exactly.
+- **Type-aware linting** (`oxlint --type-aware`, unlocked by TypeScript 7).
+- **`pnpm-workspace.yaml`** for `onlyBuiltDependencies` — pnpm 10 blocks
+  lifecycle scripts and workerd/esbuild need theirs.
+- **Dependabot `major` group**, so coupled majors arrive as one reviewable PR.
+
+### Changed
+
+- **`infra/` is an optional Cloudflare Access module.** It declares no
+  `provider` and no `backend` block — you consume it from your own Terraform,
+  with your own state and pipeline. An operator who doesn't want Access never
+  installs Terraform at all.
+
+  Access is no longer applied on every deploy. Application code changes weekly;
+  a security perimeter changes maybe twice a year. Coupling them meant a
+  routine merge could alter the security boundary — clear `ACCESS_POLICY_MODE`
+  and the next unrelated deploy silently destroys the Access application — and
+  it pinned `Access: Apps and Policies: Edit` onto the deploy credential.
+
+  `variables.tf` drops from 16 variables to 6. One of the removed,
+  `terraform_state_bucket`, was mandatory on every plan and referenced by zero
+  HCL expressions.
+
+- **CI and deployment are separate concerns.** `ci.yml` is the project's own
+  gate: no credentials, no operator variables, runs on every PR and fork with
+  zero setup. The `deploy-*.yml` workflows are a reference implementation
+  needing only `CLOUDFLARE_API_TOKEN`; they skip when unconfigured and fail
+  naming missing variables when half-configured.
+
+- **The production approval gate is unchanged in substance.** It was always the
+  GitHub Environment required-reviewer rule, never Terraform. Reviewers now
+  read a `wrangler deploy --dry-run` binding list instead of a tfplan.
+
+- **Bearer token seeding is out of band**:
+  `openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker>`.
+  Rotation is the same command; effective immediately, no deploy.
+
+- **`render-wrangler-dev.mjs` → `render-wrangler-config.mjs`**, now the single
+  path to `wrangler.jsonc` for dev, test and deploy, so local config cannot
+  drift from deployed config. It validates its own output and rejects
+  non-integer rate limits.
+
+- **Node floor** `>=18.0.0` → `>=22.12.0`. The old floor was already violated by
+  the installed oxlint/oxfmt.
+
+- **Dependencies**: typescript 5.9 → 7.0.2 (dropping
+  `@typescript/native-preview`; `tsgo` → `tsc`), wrangler 3 → 4, vitest 2 → 4
+  with `@cloudflare/vitest-pool-workers` 0.8 → 0.20, zod 3 → 4,
+  `@cloudflare/workers-types` 4 → 5, `@types/node` 22 → 26, oxlint 1.61 → 1.76,
+  oxfmt 0.42 → 0.61, hono → 4.12.33, plus `vite` ^7 as an explicit devDependency
+  (vitest 4 needs ≥6; pnpm otherwise pins the vitest-2-era 5.4.21).
+
+### Fixed
+
+- **Rate limiting was never actually deployed.** wrangler 3 does not understand
+  the `ratelimits` config key and silently dropped it, so the bindings added in
+  1.x never reached the Worker; the middleware found them undefined and passed
+  every request through. The wrangler 4 upgrade fixes this — both limiters now
+  appear in the deploy binding list. The vitest pool bundles its own wrangler 4,
+  which is why the unit test passed and nothing surfaced it.
+
+- **Floating promise in `PactBrokerDO`'s constructor.**
+  `ctx.blockConcurrencyWhile()` was unmarked — harmless in practice but
+  invisible to every check in the toolchain, and the DO fires webhooks with
+  retry loops, which is where a dropped promise disappears silently. Found by
+  type-aware lint.
+
+- **Three dead type assertions.** Two `as WebhookEvent[]` casts became redundant
+  once zod 4 inferred `z.enum([...]).array()` precisely.
+
+- **Worker bundle.** Named zod imports rather than `import { z }`, which makes
+  `z.locales` reachable and defeats tree-shaking — worth ~279 KiB of locale
+  files for languages this broker never uses.
+
+- **`package.json` version.** It said `1.0.0` while tags ran to `v1.3.0`; the
+  manifest and the tag now agree.
+
+### Migration from 1.x
+
+Deployment configuration changes completely. Roughly 20 minutes.
+
+1. **Add `CLOUDFLARE_API_TOKEN`** as a repo secret if it isn't one already. It
+   needs Workers Scripts: Edit, Workers Routes: Edit, and DNS: Edit.
+2. **Set the per-environment vars** on `staging` and `production`:
+   `CLOUDFLARE_ACCOUNT_ID`, `DOMAIN`, `WORKER_NAME`. Optionally
+   `ALLOW_PUBLIC_READ`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_BADGES`,
+   `MUTATING_RATE_LIMIT_THRESHOLD`, `READ_RATE_LIMIT_THRESHOLD`.
+3. **Seed the bearer token** on each Worker, using the *existing* value from
+   Secrets Manager so the cutover is invisible to clients:
+   ```bash
+   wrangler secret put PACT_BROKER_TOKEN --name <worker-name>
+   ```
+4. **Confirm the required-reviewer rule** on the `production` GitHub
+   Environment. It was always the real gate; now it is the only one.
+5. **If you use Cloudflare Access**, move it into your own Terraform. Consume
+   `infra/` as a module (see `infra/README.md`) and import the existing
+   resources so the perimeter is not recreated:
+   ```bash
+   terraform import 'module.pact_broker_access.cloudflare_zero_trust_access_policy.broker[0]' <account_id>/<policy_id>
+   terraform import 'module.pact_broker_access.cloudflare_zero_trust_access_application.broker[0]' <account_id>/<app_id>
+   ```
+6. **Delete** the old repo secrets and environment vars: `AWS_ACCESS_KEY_ID`,
+   `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `TERRAFORM_STATE_BUCKET`,
+   `SECRETS_PREFIX`, `SMOKE_TEST_BROKER_TOKEN`, `INFRA_DEPLOY_ENABLED`,
+   `TF_WORKSPACE`, `ACCESS_POLICY_MODE`, `ACCESS_SERVICE_TOKEN_ID`.
+7. **Deploy staging and verify**, then production.
+8. **Decommission** the Secrets Manager entries and the S3 state bucket once a
+   production deploy has gone green.
+
+The custom domain transfers without downtime — `cloudflare_workers_custom_domain`
+and wrangler's `custom_domain: true` create the same underlying binding, so
+wrangler adopts the existing one rather than recreating it.
+
+**Durable Object data is untouched.** The DO namespace is keyed on the Worker
+name, which does not change.
+
 ## 1.3.0 — 2026-05-06
 
 Documentation parity with the broader Cupa platform handover repos, plus

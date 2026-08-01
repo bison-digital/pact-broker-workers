@@ -81,7 +81,7 @@ The Worker and Durable Object both report to Cloudflare's dashboard:
   consumer started publishing oversized fixtures.
 - **Custom Domain** (Workers Routes / Custom Domains). Should always
   show "Active". A non-active state means the route binding diverged
-  from Terraform; re-apply infra to recover.
+  from the Worker; re-run a deploy to recreate it.
 
 ## Recommended alerts
 
