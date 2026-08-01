@@ -47,14 +47,13 @@
     "@cloudflare/workers-types": "^4.20241205.0",
     "@types/node": "^22.10.0",
     "@typescript/native-preview": "7.0.0-dev.20260327.2",
-    "drizzle-kit": "^0.31.0",
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9",
-    "wrangler": "^3.93.0"
+    "wrangler": "^4.118.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.12.0"
   }
 }
