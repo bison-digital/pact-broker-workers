@@ -136,6 +136,6 @@ export function runMigrations(sql: SqlStorage): void {
  */
 export async function runMigrationsDrizzle(db: SqliteRemoteDatabase): Promise<void> {
   for (const migration of migrations) {
-    await db.run(migration as unknown as Parameters<typeof db.run>[0]);
+    await db.run(migration);
   }
 }
