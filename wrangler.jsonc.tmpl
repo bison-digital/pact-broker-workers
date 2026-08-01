@@ -1,14 +1,14 @@
 /**
  * Wrangler config TEMPLATE — do not edit the materialised wrangler.jsonc.
  *
- * `wrangler.jsonc` is generated from this file by Terraform on every apply
- * (see infra/wrangler.tf → local_file.wrangler_config). The placeholder
- * values below are filled in per workspace using your TF_VARs.
+ * `wrangler.jsonc` is generated from this file by
+ * scripts/render-wrangler-config.mjs, which runs automatically before dev,
+ * test and deploy. Placeholders are filled from environment variables; see
+ * that script for the full list and its local-dev defaults.
  *
  * If you need to change static settings (compatibility_flags, observability,
  * durable_objects bindings, migrations, etc.), edit THIS template —
- * `wrangler.jsonc` itself is gitignored and gets overwritten on the next
- * apply.
+ * `wrangler.jsonc` itself is gitignored and is overwritten on every render.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -20,6 +20,12 @@
   "dev": {
     "port": 9090
   },
+  // Custom domain. Wrangler creates the DNS record and issues the
+  // certificate on deploy — no separate DNS step and no IaC layer.
+  //
+  // Rendered as [] when DOMAIN is unset, which is the case for local dev and
+  // the test suite. Never hand-write a domain here; it is per-environment.
+  "routes": ${routes},
   "observability": {
     "enabled": true
   },
@@ -64,15 +70,23 @@
         "period": 60
       }
     }
-  ]
-  // The Worker's custom-domain binding is managed by Terraform
-  // (infra/main.tf → cloudflare_workers_custom_domain.pact_broker).
-  // Do not re-add a "routes" block here — wrangler would then call the
-  // zone Workers Routes API on every deploy, which (a) duplicates
-  // Terraform's ownership and (b) requires an extra Workers Routes: Edit
-  // permission on the CI token.
+  ],
+  // Declares the secret this Worker needs WITHOUT carrying its value.
   //
-  // The PACT_BROKER_TOKEN secret is also managed by Terraform
-  // (infra/wrangler.tf → terraform_data.worker_secret) reading from
-  // AWS Secrets Manager. Do not add it as a plaintext `vars` entry.
+  // `wrangler deploy` fails if PACT_BROKER_TOKEN is not already set on the
+  // Worker, so a broker that was never seeded cannot ship unauthenticated.
+  // `wrangler dev` warns when it is missing from .dev.vars.
+  //
+  // Nothing in CI reads or writes the value. Seed it once, out of band:
+  //
+  //   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker>
+  //
+  // Worker secrets are durable across deploys — wrangler only removes one on
+  // an explicit `wrangler secret delete`. Rotation is the same command again.
+  //
+  // Never add PACT_BROKER_TOKEN to `vars`: those are visible in the dashboard
+  // and in `wrangler deploy` output.
+  "secrets": {
+    "required": ["PACT_BROKER_TOKEN"]
+  }
 }
