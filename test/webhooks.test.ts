@@ -1,17 +1,19 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { fetchMock } from "cloudflare:test";
+import { describe, it, expect } from "vitest";
 import { req, reqJson, authHeaders, publishPact, publishVerification } from "./helpers";
 
-beforeAll(() => {
-  fetchMock.activate();
-  fetchMock.disableNetConnect();
-});
-
-beforeEach(() => {
-  // Re-prime interceptors each test. Each fetch consumes one interceptor.
-  const origin = fetchMock.get("https://webhook.example");
-  origin.intercept({ path: "/hook", method: "POST" }).reply(200, "ok").persist();
-});
+// Outbound webhook delivery is intercepted by the `outboundService` handler
+// in vitest.config.ts, which answers https://webhook.example/hook with 200
+// and throws for anything else.
+//
+// This replaces `fetchMock` from `cloudflare:test`, removed in
+// @cloudflare/vitest-pool-workers 0.13. fetchMock had to be re-primed in a
+// beforeEach because each request consumed an interceptor; outboundService
+// is configured once and needs no per-test setup.
+//
+// Mocking globalThis.fetch — the migration guide's suggestion — would not
+// work here: the request is issued from inside PactBrokerDO.fireWebhook(),
+// and the "global mocks apply to the main worker" guarantee does not extend
+// into a Durable Object.
 
 async function createWebhook(
   payload: Record<string, unknown>,
