@@ -35,3 +35,12 @@ coverage/
 
 # Local Cloudflare state
 .mf/
+
+# Provider binaries, if anyone ever runs terraform in a checkout. This project
+# has no IaC layer (removed in 2.0.0), but `terraform init` downloads a ~240 MB
+# provider that exceeds GitHub's 100 MB file limit — and these patterns used to
+# live in infra/.gitignore, which disappeared along with the directory.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
