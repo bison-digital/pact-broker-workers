@@ -11,7 +11,27 @@
     //
     // Allow-listed rather than disabled so the rule still catches accidental
     // dangling underscores elsewhere.
-    "no-underscore-dangle": ["warn", { "allow": ["_links", "_embedded", "_result"] }]
+    "no-underscore-dangle": ["warn", { "allow": ["_links", "_embedded", "_result"] }],
+    // Type-aware rules (require `--type-aware` + the oxlint-tsgolint binary;
+    // see the `lint` script). Deliberately a narrow pair rather than the whole
+    // type-aware set: the Durable Object fires webhooks with retry loops and
+    // back-off timers, and a dropped promise there fails silently — no test
+    // and no other rule catches it.
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    // `--type-aware` turns on the whole type-aware set, so the two rules
+    // above arrive with company. These two are switched back off:
+    //
+    // no-unsafe-type-assertion — 52 hits, essentially all in test/, where
+    //   casting an `unknown` JSON body to the shape under assertion IS the
+    //   test. Silencing each site would obscure the tests to satisfy a rule
+    //   that has nothing to tell us here.
+    // consistent-return — one hit, on the CORS middleware in src/index.ts.
+    //   Returning a Response to short-circuit an OPTIONS preflight and
+    //   falling through otherwise is the documented Hono middleware
+    //   contract, not an inconsistency.
+    "typescript/no-unsafe-type-assertion": "off",
+    "typescript/consistent-return": "off"
   },
   "categories": {
     "correctness": "error",

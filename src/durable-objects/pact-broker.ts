@@ -43,8 +43,18 @@ export class PactBrokerDO extends DurableObject<Env> {
     // Initialize Drizzle with DO storage
     this.db = drizzle(ctx.storage, { logger: false });
 
-    // Run migrations on construction
-    this.ctx.blockConcurrencyWhile(async () => {
+    // Run migrations on construction.
+    //
+    // Deliberately not awaited — a constructor cannot await, and this is the
+    // documented Cloudflare pattern: the runtime queues every incoming
+    // request behind this promise, so no handler observes a half-migrated
+    // schema. `void` marks the floating promise as intentional.
+    //
+    // If runMigrations throws, blockConcurrencyWhile rejects and the runtime
+    // tears down this DO instance rather than serving from a broken schema.
+    // That is the behaviour we want: failing construction is safer than
+    // answering queries against half-applied migrations.
+    void this.ctx.blockConcurrencyWhile(async () => {
       runMigrations(ctx.storage.sql);
     });
   }

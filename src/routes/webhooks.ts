@@ -148,7 +148,7 @@ app.post("/", async (c) => {
   }
   const broker = getBroker(c.env);
   const hook = await broker.createWebhook({
-    events: parsed.data.events as WebhookEvent[],
+    events: parsed.data.events,
     url: parsed.data.url,
     method: parsed.data.method,
     headers: parsed.data.headers ?? null,
@@ -200,7 +200,7 @@ app.put("/:id", async (c) => {
   }
   const broker = getBroker(c.env);
   const updated = await broker.updateWebhook(parseId(idResult.value), {
-    ...(parsed.data.events !== undefined && { events: parsed.data.events as WebhookEvent[] }),
+    ...(parsed.data.events !== undefined && { events: parsed.data.events }),
     ...(parsed.data.url !== undefined && { url: parsed.data.url }),
     ...(parsed.data.method !== undefined && { method: parsed.data.method }),
     ...(parsed.data.headers !== undefined && { headers: parsed.data.headers }),
