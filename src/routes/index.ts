@@ -35,9 +35,39 @@ app.get("/", (c) => {
   return c.json(response);
 });
 
-// Health check
-app.get("/health", (c) => {
-  return c.json({ status: "ok" });
+/**
+ * Health check — public, no auth, and exempt from rate limiting
+ * (`PUBLIC_PATHS` in src/middleware/rate-limit.ts) so a throttled broker stays
+ * diagnosable and cannot fail its own deploy smoke test.
+ *
+ * This probes the Durable Object rather than returning a static literal,
+ * because it is the only post-deploy signal CI has. Nothing in the deploy
+ * pipeline holds a bearer token, so an authenticated smoke test is not
+ * available; a static 200 would prove only that the Worker booted, not that
+ * the DO binding resolves or that its SQLite storage is readable.
+ *
+ * The trade-off is that an unauthenticated caller can wake and query the DO.
+ * What keeps that safe is the probe itself — a single indexed
+ * `SELECT 1 ... LIMIT 1`, O(1) regardless of how much data the broker holds.
+ * See PactBrokerDO.healthCheck.
+ */
+app.get("/health", async (c) => {
+  const id = c.env.PACT_BROKER.idFromName("pact-broker");
+  try {
+    await c.env.PACT_BROKER.get(id).healthCheck();
+    return c.json({ status: "ok", storage: "ok" });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "error",
+        msg: "health check failed",
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    // Non-2xx so `curl -f` in the deploy smoke test fails the job.
+    return c.json({ status: "error", storage: "error" }, 503);
+  }
 });
 
 export { app as indexRoutes };
