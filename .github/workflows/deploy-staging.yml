@@ -1,5 +1,20 @@
 name: Deploy to Staging
 
+# REFERENCE IMPLEMENTATION — not this project's own CI (that is ci.yml).
+#
+# This is the deployment an operator adopts for their own broker. It needs one
+# credential, CLOUDFLARE_API_TOKEN, and nothing outside Cloudflare: no
+# Terraform, no state backend, no bucket, no second cloud account.
+#
+# It is inert until you configure it. Without a `staging` GitHub Environment
+# the job has no DOMAIN or CLOUDFLARE_ACCOUNT_ID and will fail fast rather
+# than deploy something wrong — so upstream and personal forks are unaffected
+# without needing an opt-in flag.
+#
+# The broker's bearer token is NOT here. Seed it once per Worker:
+#   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker>
+# Worker secrets survive every deploy, so CI never needs to know it.
+
 on:
   push:
     branches: [main]
@@ -9,10 +24,25 @@ concurrency:
   group: deploy-staging
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  checks:
-    name: Lint, Test, and Type-check
+  deploy:
+    name: Deploy to Staging
     runs-on: ubuntu-latest
+    environment: staging
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # Consumed by scripts/render-wrangler-config.mjs.
+      DOMAIN: ${{ vars.DOMAIN }}
+      WORKER_NAME: ${{ vars.WORKER_NAME }}
+      ALLOW_PUBLIC_READ: ${{ vars.ALLOW_PUBLIC_READ }}
+      CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
+      PUBLIC_BADGES: ${{ vars.PUBLIC_BADGES }}
+      MUTATING_RATE_LIMIT: ${{ vars.MUTATING_RATE_LIMIT }}
+      READ_RATE_LIMIT: ${{ vars.READ_RATE_LIMIT }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -21,99 +51,39 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      - name: Verify environment is configured
+        run: |
+          missing=""
+          [ -n "$DOMAIN" ] || missing="$missing DOMAIN"
+          [ -n "$WORKER_NAME" ] || missing="$missing WORKER_NAME"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::The 'staging' GitHub Environment is missing:$missing"
+            echo "See docs/CICD.md — this workflow is a reference implementation and"
+            echo "does nothing until an operator configures it."
+            exit 1
+          fi
+
+      # Re-run the checks against the exact commit being deployed. ci.yml
+      # already ran them on the PR, but main can move underneath a dispatch.
       - run: pnpm run format:check
       - run: pnpm run lint
       - run: pnpm run type-check
       - run: pnpm run test:run
 
-  deploy:
-    name: Deploy to Staging
-    needs: checks
-    # Only runs on forks that have configured staging credentials. Set
-    # repo-level var `INFRA_DEPLOY_ENABLED=true` to enable. Upstream has
-    # no credentials to deploy with, so this is skipped there.
-    if: vars.INFRA_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    environment: staging
-    env:
-      # R2 credentials for the Terraform state backend. The S3 protocol
-      # reads them from these conventional names — that is a naming
-      # convention, NOT an AWS dependency. Create the token in the R2
-      # dashboard (Manage R2 API Tokens), scoped to your state bucket.
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      # Cloudflare credentials come from repo-level secrets; operator config
-      # (account ID, domain, worker name) from env-level vars. Nothing
-      # operator-specific is committed in this repo.
-      #
-      # PACT_BROKER_TOKEN is deliberately absent: it is seeded out of band
-      # with `wrangler secret put` and CI never reads or writes it.
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_domain: ${{ vars.DOMAIN }}
-      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.14.8"
-
-      - name: Write backend config
-        # Mirrors infra/backend.hcl.example. Written here rather than passed
-        # as -backend-config flags because `endpoints` is a nested block.
-        env:
-          STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
-          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          cat > backend.hcl <<HCL
-          bucket = "${STATE_BUCKET}"
-          key    = "pact-broker-workers/terraform.tfstate"
-          region = "auto"
-          endpoints = { s3 = "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" }
-          skip_credentials_validation = true
-          skip_region_validation      = true
-          skip_requesting_account_id  = true
-          skip_metadata_api_check     = true
-          skip_s3_checksum            = true
-          use_path_style              = true
-          use_lockfile                = true
-          HCL
-        working-directory: infra
-
-      - name: Terraform init
-        run: terraform init -input=false -backend-config=backend.hcl
-        working-directory: infra
-
-      - name: Select workspace
-        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
-        working-directory: infra
-
-      - name: Terraform apply
-        run: terraform apply -auto-approve -input=false
-        working-directory: infra
+      - name: Deploy
+        # Renders wrangler.jsonc from the env above, then deploys. Fails if
+        # PACT_BROKER_TOKEN was never seeded (secrets.required in the
+        # template), rather than shipping an unconfigured broker.
+        run: pnpm run deploy
 
       - name: Smoke test
-        # Deliberately tokenless. CI holds no bearer token, so both checks
-        # are unauthenticated:
-        #
-        #   1. /health returns storage:"ok" only after PactBrokerDO.healthCheck()
-        #      resolved — that proves the Worker, the DO binding, and SQLite
-        #      storage all work, which is what the old authenticated
-        #      /pacticipants call used to prove.
-        #   2. /pacticipants must return 401, proving the auth middleware is
-        #      live and the broker is not exposed unauthenticated.
-        env:
-          DOMAIN: ${{ vars.DOMAIN }}
+        # Deliberately tokenless — CI holds no bearer token.
+        #   1. /health reports storage:"ok" only after the Durable Object
+        #      round-trip resolves, proving Worker + DO binding + SQLite.
+        #   2. /pacticipants must 401, proving auth middleware is live.
         run: |
           set -euo pipefail
 
@@ -124,19 +94,19 @@ jobs:
               break
             fi
             if [ "$i" = "5" ]; then
-              echo "Health check failed after 5 attempts"
+              echo "::error::Health check failed after 5 attempts"
               exit 1
             fi
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
 
-          # `|| true` so a connection failure falls through to the
-          # diagnostic below rather than being killed by `set -e`.
+          # `|| true` so a connection failure falls through to the diagnostic
+          # below rather than being killed by `set -e`.
           status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
             "https://${DOMAIN}/pacticipants" || true)
           if [ "$status" != "401" ]; then
-            echo "Expected 401 from unauthenticated GET /pacticipants, got HTTP ${status}."
+            echo "::error::Expected 401 from unauthenticated GET /pacticipants, got ${status}."
             echo "If this is 200 the broker is serving data without auth — check ALLOW_PUBLIC_READ."
             exit 1
           fi

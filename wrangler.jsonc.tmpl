@@ -1,14 +1,14 @@
 /**
  * Wrangler config TEMPLATE — do not edit the materialised wrangler.jsonc.
  *
- * `wrangler.jsonc` is generated from this file by Terraform on every apply
- * (see infra/wrangler.tf → local_file.wrangler_config). The placeholder
- * values below are filled in per workspace using your TF_VARs.
+ * `wrangler.jsonc` is generated from this file by
+ * scripts/render-wrangler-config.mjs, which runs automatically before dev,
+ * test and deploy. Placeholders are filled from environment variables; see
+ * that script for the full list and its defaults.
  *
  * If you need to change static settings (compatibility_flags, observability,
  * durable_objects bindings, migrations, etc.), edit THIS template —
- * `wrangler.jsonc` itself is gitignored and gets overwritten on the next
- * apply.
+ * `wrangler.jsonc` itself is gitignored and gets overwritten on every render.
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -20,6 +20,32 @@
   "dev": {
     "port": 9090
   },
+  // Custom domain. Wrangler creates the DNS record and issues the certificate
+  // on deploy — no DNS management and no separate IaC step.
+  //
+  // Rendered as [] when DOMAIN is unset, which is the case for local dev and
+  // for the test suite. Do not hand-write a domain here; it is per-workspace.
+  "routes": ${routes},
+  // Per-IP rate limiting, enforced in src/index.ts.
+  //
+  // `period` must be 10 or 60 (Cloudflare constraint). Limits are per
+  // Cloudflare location rather than zone-wide, and a throttled request still
+  // costs a Worker invocation — see the middleware comment in src/index.ts for
+  // why that trade is the right one for a CI-volume broker.
+  //
+  // namespace_id must be unique per limiter within your Cloudflare account.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMIT_MUTATING",
+      "namespace_id": "1001",
+      "simple": { "limit": ${mutating_rate_limit}, "period": 60 }
+    },
+    {
+      "name": "RATE_LIMIT_READ",
+      "namespace_id": "1002",
+      "simple": { "limit": ${read_rate_limit}, "period": 60 }
+    }
+  ],
   "observability": {
     "enabled": true
   },
@@ -57,13 +83,6 @@
   "secrets": {
     "required": ["PACT_BROKER_TOKEN"]
   }
-  // The Worker's custom-domain binding is managed by Terraform
-  // (infra/main.tf → cloudflare_workers_custom_domain.pact_broker).
-  // Do not re-add a "routes" block here — wrangler would then call the
-  // zone Workers Routes API on every deploy, which (a) duplicates
-  // Terraform's ownership and (b) requires an extra Workers Routes: Edit
-  // permission on the CI token.
-  //
   // Never add PACT_BROKER_TOKEN as a plaintext `vars` entry — `vars` are
   // visible in the dashboard and in `wrangler deploy` output.
 }

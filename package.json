@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@10.18.2",
   "scripts": {
-    "render-config": "node scripts/render-wrangler-dev.mjs",
+    "render-config": "node scripts/render-wrangler-config.mjs",
     "dev": "pnpm run render-config && wrangler dev",
     "deploy": "pnpm run render-config && wrangler deploy",
     "test": "pnpm run render-config && vitest",
@@ -16,10 +16,7 @@
     "lint:fix": "oxlint --type-aware --fix src test",
     "format": "oxfmt src test",
     "format:check": "oxfmt --check src test",
-    "cf-typegen": "wrangler types",
-    "terraform:init": "terraform -chdir=infra init -backend-config=backend.hcl",
-    "terraform:plan": "terraform -chdir=infra plan",
-    "terraform:apply": "terraform -chdir=infra apply"
+    "cf-typegen": "wrangler types"
   },
   "keywords": [
     "pact",

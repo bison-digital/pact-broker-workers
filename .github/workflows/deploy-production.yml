@@ -1,5 +1,13 @@
 name: Deploy to Production
 
+# REFERENCE IMPLEMENTATION — not this project's own CI (that is ci.yml).
+# See deploy-staging.yml for the full note on the model.
+#
+# The approval gate here is the `production` GitHub Environment's
+# required-reviewer rule, NOT a Terraform plan. Configure it under
+# Settings -> Environments -> production -> Required reviewers. Without that
+# rule this deploys unattended, which defeats the point.
+
 on:
   workflow_dispatch:
 
@@ -7,10 +15,21 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  checks:
-    name: Lint, Test, and Type-check
+  # Runs unattended, before the gate, so a reviewer approves a change that has
+  # already been proven to build. --dry-run needs no credentials and contacts
+  # nothing; it produces the binding list a reviewer should sanity-check.
+  preflight:
+    name: Checks and deploy preview
     runs-on: ubuntu-latest
+    environment: staging # env-scoped vars only; no approval rule on staging
+    env:
+      DOMAIN: ${{ vars.DOMAIN }}
+      WORKER_NAME: ${{ vars.WORKER_NAME }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -24,114 +43,41 @@ jobs:
       - run: pnpm run type-check
       - run: pnpm run test:run
 
-  plan:
-    name: Terraform Plan (production)
-    needs: checks
-    if: vars.INFRA_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    # Bind to `production` so env-scoped vars/secrets resolve. The plan
-    # itself doesn't need the reviewer gate (it's read-only); the gate
-    # is on the `apply` job below.
-    environment: production
-    env:
-      # R2 credentials for the Terraform state backend. The S3 protocol
-      # reads them from these conventional names — a naming convention,
-      # NOT an AWS dependency.
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_domain: ${{ vars.DOMAIN }}
-      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.14.8"
-
-      - name: Write backend config
-        # Mirrors infra/backend.hcl.example. Written here rather than passed
-        # as -backend-config flags because `endpoints` is a nested block.
-        env:
-          STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
-          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Build preview
         run: |
-          cat > backend.hcl <<HCL
-          bucket = "${STATE_BUCKET}"
-          key    = "pact-broker-workers/terraform.tfstate"
-          region = "auto"
-          endpoints = { s3 = "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" }
-          skip_credentials_validation = true
-          skip_region_validation      = true
-          skip_requesting_account_id  = true
-          skip_metadata_api_check     = true
-          skip_s3_checksum            = true
-          use_path_style              = true
-          use_lockfile                = true
-          HCL
-        working-directory: infra
+          pnpm run render-config
+          pnpm exec wrangler deploy --dry-run --outdir /tmp/preview 2>&1 | tee preview.txt
 
-      - name: Terraform init
-        run: terraform init -input=false -backend-config=backend.hcl
-        working-directory: infra
-
-      - name: Select workspace
-        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
-        working-directory: infra
-
-      - name: Terraform plan
-        run: terraform plan -no-color -input=false -out=tfplan | tee plan.txt
-        working-directory: infra
-
-      - name: Render plan to workflow summary
+      - name: Render preview to workflow summary
         run: |
           {
-            echo '## Terraform plan (production)'
+            echo '## Deploy preview'
+            echo ''
+            echo 'Bindings and bundle for the commit awaiting approval:'
             echo ''
             echo '```'
-            head -c 900000 infra/plan.txt
+            head -c 900000 preview.txt
             echo ''
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload tfplan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-production
-          path: infra/tfplan
-          retention-days: 7
-          if-no-files-found: error
-
-  apply:
-    name: Terraform Apply (production)
-    needs: plan
-    if: vars.INFRA_DEPLOY_ENABLED == 'true'
+  deploy:
+    name: Deploy to Production
+    needs: preflight
     runs-on: ubuntu-latest
-    environment: production   # required-reviewer gate — approver reads the plan summary above
+    environment: production # required-reviewer gate — approver reads the preview above
     env:
-      # R2 credentials for the Terraform state backend. The S3 protocol
-      # reads them from these conventional names — a naming convention,
-      # NOT an AWS dependency.
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_domain: ${{ vars.DOMAIN }}
-      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      DOMAIN: ${{ vars.DOMAIN }}
+      WORKER_NAME: ${{ vars.WORKER_NAME }}
+      ALLOW_PUBLIC_READ: ${{ vars.ALLOW_PUBLIC_READ }}
+      CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
+      PUBLIC_BADGES: ${{ vars.PUBLIC_BADGES }}
+      MUTATING_RATE_LIMIT: ${{ vars.MUTATING_RATE_LIMIT }}
+      READ_RATE_LIMIT: ${{ vars.READ_RATE_LIMIT }}
     steps:
       - uses: actions/checkout@v5
-
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -139,56 +85,23 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.14.8"
-
-      - name: Write backend config
-        # Mirrors infra/backend.hcl.example. Written here rather than passed
-        # as -backend-config flags because `endpoints` is a nested block.
-        env:
-          STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
-          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify environment is configured
         run: |
-          cat > backend.hcl <<HCL
-          bucket = "${STATE_BUCKET}"
-          key    = "pact-broker-workers/terraform.tfstate"
-          region = "auto"
-          endpoints = { s3 = "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" }
-          skip_credentials_validation = true
-          skip_region_validation      = true
-          skip_requesting_account_id  = true
-          skip_metadata_api_check     = true
-          skip_s3_checksum            = true
-          use_path_style              = true
-          use_lockfile                = true
-          HCL
-        working-directory: infra
+          missing=""
+          [ -n "$DOMAIN" ] || missing="$missing DOMAIN"
+          [ -n "$WORKER_NAME" ] || missing="$missing WORKER_NAME"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::The 'production' GitHub Environment is missing:$missing"
+            exit 1
+          fi
 
-      - name: Terraform init
-        run: terraform init -input=false -backend-config=backend.hcl
-        working-directory: infra
-
-      - name: Select workspace
-        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
-        working-directory: infra
-
-      - name: Download tfplan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-production
-          path: infra
-
-      - name: Terraform apply
-        run: terraform apply -input=false tfplan
-        working-directory: infra
+      - name: Deploy
+        run: pnpm run deploy
 
       - name: Smoke test
-        # Deliberately tokenless — CI holds no bearer token. /health returns
-        # storage:"ok" only after the DO round-trip succeeded, and
-        # /pacticipants must 401. See deploy-staging.yml for the full note.
-        env:
-          DOMAIN: ${{ vars.DOMAIN }}
+        # Tokenless — see deploy-staging.yml for why.
         run: |
           set -euo pipefail
 
@@ -199,20 +112,17 @@ jobs:
               break
             fi
             if [ "$i" = "5" ]; then
-              echo "Health check failed after 5 attempts"
+              echo "::error::Health check failed after 5 attempts"
               exit 1
             fi
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
 
-          # `|| true` so a connection failure falls through to the
-          # diagnostic below rather than being killed by `set -e`.
           status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
             "https://${DOMAIN}/pacticipants" || true)
           if [ "$status" != "401" ]; then
-            echo "Expected 401 from unauthenticated GET /pacticipants, got HTTP ${status}."
-            echo "If this is 200 the broker is serving data without auth — check ALLOW_PUBLIC_READ."
+            echo "::error::Expected 401 from unauthenticated GET /pacticipants, got ${status}."
             exit 1
           fi
           echo "Auth check passed: unauthenticated /pacticipants returned 401"

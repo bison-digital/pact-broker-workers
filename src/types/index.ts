@@ -1,5 +1,16 @@
 import type { PactBrokerDO } from "../durable-objects/pact-broker";
 
+/**
+ * Cloudflare's rate-limit binding.
+ *
+ * Declared locally rather than imported: `wrangler types` would generate it,
+ * but this project keeps a hand-written Env (see CONTRIBUTING) because
+ * wrangler.jsonc is generated and gitignored.
+ */
+export interface RateLimitBinding {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 // Cloudflare bindings
 export interface Env {
   PACT_BROKER: DurableObjectNamespace<PactBrokerDO>;
@@ -9,6 +20,10 @@ export interface Env {
   PUBLIC_BADGES?: string;
   // Comma-separated list of allowed CORS origins. Empty/unset = permissive (legacy).
   CORS_ALLOWED_ORIGINS?: string;
+  // Per-IP rate limiters. Optional so the Worker still runs if an operator
+  // strips them from wrangler.jsonc — the middleware no-ops when absent.
+  RATE_LIMIT_MUTATING?: RateLimitBinding;
+  RATE_LIMIT_READ?: RateLimitBinding;
 }
 
 // Per-request variables we stash on the Hono context. Keep this narrow so the

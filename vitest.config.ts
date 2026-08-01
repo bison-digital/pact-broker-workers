@@ -41,12 +41,23 @@ function outboundService(request: Request): Response {
   );
 }
 
-function workersPlugin(bindings: Record<string, string>) {
+function workersPlugin(
+  bindings: Record<string, string>,
+  ratelimits?: Record<string, { namespace_id: string; simple: { limit: number; period: 60 } }>,
+) {
   return cloudflareTest({
     wrangler: { configPath: "./wrangler.jsonc" },
-    miniflare: { bindings, outboundService },
+    miniflare: { bindings, outboundService, ...(ratelimits ? { ratelimits } : {}) },
   });
 }
+
+// A limit low enough to trip inside a test. The rendered wrangler.jsonc uses
+// 60/600 per minute, which would need 61 requests to exercise — this project
+// overrides the binding so the 429 path is actually covered.
+const TIGHT_RATE_LIMITS = {
+  RATE_LIMIT_MUTATING: { namespace_id: "9001", simple: { limit: 2, period: 60 as const } },
+  RATE_LIMIT_READ: { namespace_id: "9002", simple: { limit: 3, period: 60 as const } },
+};
 
 export default defineConfig({
   test: {
@@ -56,7 +67,18 @@ export default defineConfig({
         test: {
           name: "default",
           include: ["test/**/*.test.ts"],
-          exclude: ["test/auth.public-read.test.ts", "test/auth.bad-token.test.ts"],
+          exclude: [
+            "test/auth.public-read.test.ts",
+            "test/auth.bad-token.test.ts",
+            "test/rate-limit.test.ts",
+          ],
+        },
+      },
+      {
+        plugins: [workersPlugin(DEFAULT_BINDINGS, TIGHT_RATE_LIMITS)],
+        test: {
+          name: "rate-limit",
+          include: ["test/rate-limit.test.ts"],
         },
       },
       {

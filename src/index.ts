@@ -61,6 +61,53 @@ app.use("*", async (c, next) => {
   );
 });
 
+/**
+ * Per-IP rate limiting.
+ *
+ * Replaces the zone-level `http_ratelimit` ruleset that Terraform used to
+ * provision. Two deliberate trade-offs came with that move:
+ *
+ *   - This runs *inside* the Worker, so a throttled request still costs an
+ *     invocation. The zone ruleset rejected at the edge.
+ *   - Limits are per Cloudflare location, not zone-wide, so a caller spread
+ *     across colos gets a multiple of the configured limit.
+ *
+ * Both are acceptable here: this is a CI-volume broker, not user traffic, and
+ * in exchange it works on every Cloudflare plan — the zone ruleset needed
+ * Pro+, which is why it shipped with a kill switch.
+ *
+ * Bindings are optional. If an operator removes them from wrangler.jsonc this
+ * degrades to no limiting rather than erroring; the in-Worker body-size cap
+ * and schema validation still apply.
+ *
+ * /health is exempt so a throttled broker can still be diagnosed, and so the
+ * deploy smoke test can't be rate-limited into a false failure.
+ */
+app.use("*", async (c, next) => {
+  if (c.req.path === "/health") return next();
+
+  const mutating = c.req.method === "PUT" || c.req.method === "POST" || c.req.method === "DELETE";
+  const limiter = mutating ? c.env.RATE_LIMIT_MUTATING : c.env.RATE_LIMIT_READ;
+  if (!limiter) return next();
+
+  // CF-Connecting-IP is set by the edge and cannot be spoofed by the client.
+  // Falling back to a constant means an unknown IP shares one bucket, which
+  // fails closed rather than handing out an unlimited bypass.
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const { success } = await limiter.limit({ key: `${mutating ? "w" : "r"}:${ip}` });
+
+  if (!success) {
+    return c.json(
+      {
+        error: "Too Many Requests",
+        message: "Rate limit exceeded. Retry shortly.",
+      },
+      429,
+    );
+  }
+  return next();
+});
+
 // Request size limit middleware
 app.use("*", async (c, next) => {
   const contentLength = c.req.header("Content-Length");
