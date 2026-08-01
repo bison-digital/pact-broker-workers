@@ -44,8 +44,13 @@ the approval gate. Without it, production deploys unattended.
 **Not here: the broker's bearer token.** CI never reads or writes it. See
 [Seeding the bearer token](#seeding-the-bearer-token).
 
-Missing a required var? The workflow fails on a named-variable error before
-touching Cloudflare, rather than deploying something half-configured.
+The deploy workflows are inert in two stages:
+
+- **No `WORKER_NAME`** on the environment → the job **skips**. Upstream and
+  personal forks stay green; there is no opt-in flag to remember, because the
+  thing that enables the deploy is the same config the deploy needs.
+- **Partially configured** → the job **fails** with a list of the missing
+  variables, before touching Cloudflare.
 
 ## End-to-end flow
 

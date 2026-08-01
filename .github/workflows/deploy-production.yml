@@ -25,6 +25,14 @@ jobs:
   preflight:
     name: Checks and deploy preview
     runs-on: ubuntu-latest
+    # Skips silently when unconfigured, so upstream and personal forks stay
+    # green rather than showing a permanent red X on every push to main. An
+    # operator fork sets WORKER_NAME on the environment and it activates.
+    #
+    # This is a skip, not the old INFRA_DEPLOY_ENABLED opt-in flag: there is
+    # no extra variable to remember, and the thing that enables the deploy is
+    # the same config the deploy actually needs.
+    if: vars.WORKER_NAME != ''
     environment: staging # env-scoped vars only; no approval rule on staging
     env:
       DOMAIN: ${{ vars.DOMAIN }}
@@ -65,6 +73,14 @@ jobs:
     name: Deploy to Production
     needs: preflight
     runs-on: ubuntu-latest
+    # Skips silently when unconfigured, so upstream and personal forks stay
+    # green rather than showing a permanent red X on every push to main. An
+    # operator fork sets WORKER_NAME on the environment and it activates.
+    #
+    # This is a skip, not the old INFRA_DEPLOY_ENABLED opt-in flag: there is
+    # no extra variable to remember, and the thing that enables the deploy is
+    # the same config the deploy actually needs.
+    if: vars.WORKER_NAME != ''
     environment: production # required-reviewer gate — approver reads the preview above
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

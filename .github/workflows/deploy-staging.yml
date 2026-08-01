@@ -6,10 +6,11 @@ name: Deploy to Staging
 # credential, CLOUDFLARE_API_TOKEN, and nothing outside Cloudflare: no
 # Terraform, no state backend, no bucket, no second cloud account.
 #
-# It is inert until you configure it. Without a `staging` GitHub Environment
-# the job has no DOMAIN or CLOUDFLARE_ACCOUNT_ID and will fail fast rather
-# than deploy something wrong — so upstream and personal forks are unaffected
-# without needing an opt-in flag.
+# It is inert until you configure it, in two stages:
+#   - No `WORKER_NAME` on the environment  -> the job SKIPS. Upstream and
+#     personal forks stay green with no opt-in flag to remember.
+#   - Partially configured                 -> the job FAILS with a list of the
+#     missing variables, rather than deploying something half-formed.
 #
 # The broker's bearer token is NOT here. Seed it once per Worker:
 #   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker>
@@ -31,6 +32,14 @@ jobs:
   deploy:
     name: Deploy to Staging
     runs-on: ubuntu-latest
+    # Skips silently when unconfigured, so upstream and personal forks stay
+    # green rather than showing a permanent red X on every push to main. An
+    # operator fork sets WORKER_NAME on the environment and it activates.
+    #
+    # This is a skip, not the old INFRA_DEPLOY_ENABLED opt-in flag: there is
+    # no extra variable to remember, and the thing that enables the deploy is
+    # the same config the deploy actually needs.
+    if: vars.WORKER_NAME != ''
     environment: staging
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
