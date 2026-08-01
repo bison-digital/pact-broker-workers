@@ -68,7 +68,7 @@ jobs:
   infra-plan:
     name: Terraform Plan (staging)
     # Only runs on forks that have configured the `staging` GitHub
-    # Environment with AWS + Cloudflare credentials. Set the repo-level
+    # Environment with R2 + Cloudflare credentials. Set the repo-level
     # variable `INFRA_DEPLOY_ENABLED=true` to opt in. On the upstream
     # agnostic repo, this is off by design — plans need operator
     # credentials that upstream doesn't (and shouldn't) hold.
@@ -79,18 +79,17 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      # R2 credentials for the Terraform state backend. The S3 protocol
+      # reads them from these conventional names — a naming convention,
+      # NOT an AWS dependency.
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
       TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
       TF_VAR_domain: ${{ vars.DOMAIN }}
       TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
     steps:
       - uses: actions/checkout@v5
 
@@ -98,12 +97,30 @@ jobs:
         with:
           terraform_version: "1.14.8"
 
-      - name: Terraform init
+      - name: Write backend config
+        # Mirrors infra/backend.hcl.example. Written here rather than passed
+        # as -backend-config flags because `endpoints` is a nested block.
+        env:
+          STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
+          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
-            -backend-config="key=pact-broker-workers/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+          cat > backend.hcl <<HCL
+          bucket = "${STATE_BUCKET}"
+          key    = "pact-broker-workers/terraform.tfstate"
+          region = "auto"
+          endpoints = { s3 = "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" }
+          skip_credentials_validation = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          skip_metadata_api_check     = true
+          skip_s3_checksum            = true
+          use_path_style              = true
+          use_lockfile                = true
+          HCL
+        working-directory: infra
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config=backend.hcl
         working-directory: infra
 
       - name: Select workspace

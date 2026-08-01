@@ -34,18 +34,17 @@ jobs:
     # is on the `apply` job below.
     environment: production
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      # R2 credentials for the Terraform state backend. The S3 protocol
+      # reads them from these conventional names — a naming convention,
+      # NOT an AWS dependency.
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
       TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
       TF_VAR_domain: ${{ vars.DOMAIN }}
       TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -59,12 +58,30 @@ jobs:
         with:
           terraform_version: "1.14.8"
 
-      - name: Terraform init
+      - name: Write backend config
+        # Mirrors infra/backend.hcl.example. Written here rather than passed
+        # as -backend-config flags because `endpoints` is a nested block.
+        env:
+          STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
+          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
-            -backend-config="key=pact-broker-workers/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+          cat > backend.hcl <<HCL
+          bucket = "${STATE_BUCKET}"
+          key    = "pact-broker-workers/terraform.tfstate"
+          region = "auto"
+          endpoints = { s3 = "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" }
+          skip_credentials_validation = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          skip_metadata_api_check     = true
+          skip_s3_checksum            = true
+          use_path_style              = true
+          use_lockfile                = true
+          HCL
+        working-directory: infra
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config=backend.hcl
         working-directory: infra
 
       - name: Select workspace
@@ -101,18 +118,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: production   # required-reviewer gate — approver reads the plan summary above
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      # R2 credentials for the Terraform state backend. The S3 protocol
+      # reads them from these conventional names — a naming convention,
+      # NOT an AWS dependency.
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
       TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
       TF_VAR_domain: ${{ vars.DOMAIN }}
       TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
     steps:
       - uses: actions/checkout@v5
 
@@ -127,12 +143,30 @@ jobs:
         with:
           terraform_version: "1.14.8"
 
-      - name: Terraform init
+      - name: Write backend config
+        # Mirrors infra/backend.hcl.example. Written here rather than passed
+        # as -backend-config flags because `endpoints` is a nested block.
+        env:
+          STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
+          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
-            -backend-config="key=pact-broker-workers/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
+          cat > backend.hcl <<HCL
+          bucket = "${STATE_BUCKET}"
+          key    = "pact-broker-workers/terraform.tfstate"
+          region = "auto"
+          endpoints = { s3 = "https://${ACCOUNT_ID}.r2.cloudflarestorage.com" }
+          skip_credentials_validation = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          skip_metadata_api_check     = true
+          skip_s3_checksum            = true
+          use_path_style              = true
+          use_lockfile                = true
+          HCL
+        working-directory: infra
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config=backend.hcl
         working-directory: infra
 
       - name: Select workspace
@@ -149,35 +183,36 @@ jobs:
         run: terraform apply -input=false tfplan
         working-directory: infra
 
-      - name: Health check
+      - name: Smoke test
+        # Deliberately tokenless — CI holds no bearer token. /health returns
+        # storage:"ok" only after the DO round-trip succeeded, and
+        # /pacticipants must 401. See deploy-staging.yml for the full note.
         env:
           DOMAIN: ${{ vars.DOMAIN }}
         run: |
+          set -euo pipefail
+
           for i in 1 2 3 4 5; do
-            if curl -sf "https://${DOMAIN}/health"; then
-              echo " Health check passed"
-              exit 0
+            if body=$(curl -fsS --max-time 10 "https://${DOMAIN}/health"); then
+              echo "$body" | jq -e '.status == "ok" and .storage == "ok"' > /dev/null
+              echo "Health check passed: ${body}"
+              break
+            fi
+            if [ "$i" = "5" ]; then
+              echo "Health check failed after 5 attempts"
+              exit 1
             fi
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
-          echo "Health check failed after 5 attempts"
-          exit 1
 
-      - name: Authenticated smoke test
-        env:
-          DOMAIN: ${{ vars.DOMAIN }}
-          BROKER_TOKEN: ${{ secrets.SMOKE_TEST_BROKER_TOKEN }}
-        run: |
-          if [ -z "$BROKER_TOKEN" ]; then
-            echo "SMOKE_TEST_BROKER_TOKEN not set — skipping authenticated smoke test."
-            exit 0
-          fi
-          status=$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer $BROKER_TOKEN" \
-            "https://${DOMAIN}/pacticipants")
-          if [ "$status" != "200" ]; then
-            echo "Authenticated smoke test failed — got HTTP $status for GET /pacticipants"
+          # `|| true` so a connection failure falls through to the
+          # diagnostic below rather than being killed by `set -e`.
+          status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            "https://${DOMAIN}/pacticipants" || true)
+          if [ "$status" != "401" ]; then
+            echo "Expected 401 from unauthenticated GET /pacticipants, got HTTP ${status}."
+            echo "If this is 200 the broker is serving data without auth — check ALLOW_PUBLIC_READ."
             exit 1
           fi
-          echo "Authenticated smoke test passed (HTTP 200)"
+          echo "Auth check passed: unauthenticated /pacticipants returned 401"
