@@ -41,6 +41,21 @@
     "ALLOW_PUBLIC_READ": "${allow_public_read}",
     "CORS_ALLOWED_ORIGINS": "${cors_allowed_origins}",
     "PUBLIC_BADGES": "${public_badges}"
+  },
+  // Declares the secret this Worker needs WITHOUT carrying its value.
+  //
+  // `wrangler deploy` fails if PACT_BROKER_TOKEN is not already set on the
+  // Worker, so a broker that was never seeded cannot ship unauthenticated.
+  // `wrangler dev` warns if it is missing from .dev.vars.
+  //
+  // Nothing in CI reads or writes the value. Seed it once, out of band:
+  //
+  //   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker>
+  //
+  // Worker secrets are durable across deploys — wrangler only removes one on
+  // an explicit `wrangler secret delete`. Rotation is the same command again.
+  "secrets": {
+    "required": ["PACT_BROKER_TOKEN"]
   }
   // The Worker's custom-domain binding is managed by Terraform
   // (infra/main.tf → cloudflare_workers_custom_domain.pact_broker).
@@ -49,7 +64,6 @@
   // Terraform's ownership and (b) requires an extra Workers Routes: Edit
   // permission on the CI token.
   //
-  // The PACT_BROKER_TOKEN secret is also managed by Terraform
-  // (infra/wrangler.tf → terraform_data.worker_secret) reading from
-  // AWS Secrets Manager. Do not add it as a plaintext `vars` entry.
+  // Never add PACT_BROKER_TOKEN as a plaintext `vars` entry — `vars` are
+  // visible in the dashboard and in `wrangler deploy` output.
 }
