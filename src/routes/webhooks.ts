@@ -22,7 +22,7 @@ const webhookCreateSchema = z.object({
       message: "url must use https",
     }),
   method: z.enum(["POST", "PUT", "PATCH"]).optional(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   body: z.string().nullable().optional(),
   consumer: z
     .string()
@@ -137,7 +137,7 @@ app.post("/", async (c) => {
   }
   const parsed = webhookCreateSchema.safeParse(raw);
   if (!parsed.success) {
-    const first = parsed.error.errors[0];
+    const first = parsed.error.issues[0];
     return c.json(
       {
         error: "Bad Request",
@@ -189,7 +189,7 @@ app.put("/:id", async (c) => {
   }
   const parsed = webhookUpdateSchema.safeParse(raw);
   if (!parsed.success) {
-    const first = parsed.error.errors[0];
+    const first = parsed.error.issues[0];
     return c.json(
       {
         error: "Bad Request",

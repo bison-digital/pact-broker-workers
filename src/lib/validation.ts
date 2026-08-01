@@ -78,14 +78,14 @@ export const environmentNameSchema = z
  */
 export function validateParam<T>(
   c: Context,
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T>,
   value: string | undefined,
   paramName: string,
 ): { valid: true; value: T } | { valid: false; response: Response } {
   const result = schema.safeParse(value);
 
   if (!result.success) {
-    const errorMessage = result.error.errors[0]?.message || "Invalid input";
+    const errorMessage = result.error.issues[0]?.message || "Invalid input";
     return {
       valid: false,
       response: c.json(
@@ -108,7 +108,7 @@ export function validateParam<T>(
 export function validateParams(
   c: Context,
   validations: Array<{
-    schema: z.ZodSchema;
+    schema: z.ZodType;
     value: string | undefined;
     name: string;
   }>,
@@ -133,7 +133,7 @@ export function validateParams(
  */
 export function validateOptionalQuery<T>(
   c: Context,
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T>,
   value: string | undefined,
   paramName: string,
 ): { valid: true; value: T | undefined } | { valid: false; response: Response } {
