@@ -9,7 +9,7 @@ does, what configuration it needs, and how to drive a deploy / rollback.
 | Workflow                | Trigger                       | Effect                                                                                                                                                                                                                                            |
 | ----------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci.yml`                | PR to main, push to main      | Lint, format check, type-check, vitest, `wrangler.jsonc.tmpl` route-block guard. If `vars.INFRA_DEPLOY_ENABLED=true` is set, also runs `terraform plan` against the staging workspace and posts the plan as a PR comment.                          |
-| `deploy-staging.yml`    | push to main, manual dispatch | Re-runs the full check suite, then (when `vars.INFRA_DEPLOY_ENABLED=true`) terraform-applies to the `staging` workspace, runs `/health` + an authenticated `/pacticipants` smoke test against the staging URL.                                    |
+| `deploy-staging.yml`    | push to main, manual dispatch | Re-runs the full check suite, then (when `vars.INFRA_DEPLOY_ENABLED=true`) terraform-applies to the `staging` workspace and runs the tokenless smoke test against the staging URL.                                                               |
 | `deploy-production.yml` | manual dispatch               | Re-runs checks, terraform plan, **required-reviewer gate** (the `production` GitHub Environment), terraform apply to the `production` workspace, post-apply health + smoke. Reviewers see the plan summary on the run page before approving.       |
 
 The `INFRA_DEPLOY_ENABLED` switch is intentional: upstream
@@ -33,7 +33,7 @@ credentials, so the deploy steps no-op. Operator forks set the var to
        ┌──────────────────────────┐
        │   deploy-staging.yml     │      checks again
        │   (auto on push to main) │      terraform apply → staging workspace
-       │                          │      smoke: /health + /pacticipants
+       │                          │      smoke: /health storage:ok + 401
        └────────────┬─────────────┘
                     │
                     │ human verifies staging
@@ -42,7 +42,7 @@ credentials, so the deploy steps no-op. Operator forks set the var to
        ┌──────────────────────────┐
        │   deploy-production.yml  │      reviewer-approval gate
        │   (manual dispatch)      │      terraform apply → production workspace
-       │                          │      smoke: /health + /pacticipants
+       │                          │      smoke: /health storage:ok + 401
        └──────────────────────────┘
 ```
 
@@ -61,36 +61,44 @@ the `production` Terraform workspace, gated by the reviewer rule.
 | Var                       | Used by                                                                                            |
 | ------------------------- | -------------------------------------------------------------------------------------------------- |
 | `INFRA_DEPLOY_ENABLED`    | Gates every deploy step. Set to `true` on operator forks; leave unset on upstream / personal forks. |
-| `AWS_REGION`              | Every workflow that runs `terraform` or reads Secrets Manager                                       |
-| `TERRAFORM_STATE_BUCKET`  | Every workflow that runs `terraform`                                                                |
+| `TERRAFORM_STATE_BUCKET`  | Every workflow that runs `terraform` — the R2 bucket holding state                                  |
+| `CLOUDFLARE_ACCOUNT_ID`   | Every workflow that runs `terraform`; also forms the R2 state endpoint                              |
 
 **Secrets**:
 
-| Secret                  | Used by                                  |
-| ----------------------- | ---------------------------------------- |
-| `AWS_ACCESS_KEY_ID`     | Every terraform / Secrets Manager step   |
-| `AWS_SECRET_ACCESS_KEY` | Every terraform / Secrets Manager step   |
-| `CLOUDFLARE_API_TOKEN`  | Every terraform step (Workers / DNS)     |
+| Secret                  | Used by                                       |
+| ----------------------- | --------------------------------------------- |
+| `R2_ACCESS_KEY_ID`      | Terraform state backend (R2)                  |
+| `R2_SECRET_ACCESS_KEY`  | Terraform state backend (R2)                  |
+| `CLOUDFLARE_API_TOKEN`  | Every terraform step (Workers / DNS)          |
+
+The workflows map the R2 pair onto `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY`, which is what Terraform's S3-protocol backend
+reads. That is a naming convention of the protocol — there is no AWS
+account involved anywhere in this pipeline.
 
 These can be overridden at the GH Environment level if staging and
-production live in different AWS accounts.
+production use different Cloudflare accounts.
+
+**Notably absent:** the broker's bearer token. CI never reads or writes it.
+See [Rotate the bearer token](#rotate-the-bearer-token).
 
 ### Per-environment (`staging`, `production`)
 
 Each GH Environment must hold:
 
 **Vars**: `CLOUDFLARE_ACCOUNT_ID`, `DOMAIN`, `WORKER_NAME`,
-`SECRETS_PREFIX`. The `production` environment must also have the
+`TF_WORKSPACE`. The `production` environment must also have the
 **required-reviewer protection rule** configured. Without it,
 `deploy-production.yml` will apply unconditionally — which defeats the
 gating model.
 
 **Secrets**: `CLOUDFLARE_ZONE_ID` (zone differs between operators; some
-also override the AWS / Cloudflare credentials per environment).
+also override the R2 / Cloudflare credentials per environment).
 
-The full list of inputs and the AWS Secrets Manager bootstrap command
-live in [`infra/README.md`](../infra/README.md#required-inputs). Treat
-that file as the canonical reference; this page only summarises.
+The full list of inputs lives in
+[`infra/README.md`](../infra/README.md#required-inputs). Treat that file as
+the canonical reference; this page only summarises.
 
 ## Runbooks
 
@@ -101,17 +109,14 @@ that file as the canonical reference; this page only summarises.
 3. Create `staging` and `production` GH Environments with their
    per-environment vars/secrets. Add the required-reviewer rule to
    `production`.
-4. Seed the bearer token in AWS Secrets Manager — once per workspace:
+4. Seed the bearer token — once per Worker, from your workstation:
    ```bash
-   aws secretsmanager create-secret \
-     --name "<your-secrets-prefix>/staging/pact-broker-token" \
-     --secret-string "$(openssl rand -hex 32)" \
-     --recovery-window-in-days 0
-   aws secretsmanager create-secret \
-     --name "<your-secrets-prefix>/production/pact-broker-token" \
-     --secret-string "$(openssl rand -hex 32)" \
-     --recovery-window-in-days 0
+   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name pact-broker-staging
+   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name pact-broker-production
    ```
+   Nothing in CI reads this value. If you skip this step, `wrangler deploy`
+   fails on the `secrets.required` check rather than shipping a broker that
+   rejects every request.
 5. Set `vars.INFRA_DEPLOY_ENABLED=true` at repo scope.
 6. Push a no-op commit to `main` (or trigger `deploy-staging.yml` via
    manual dispatch). Watch the staging deploy succeed, then dispatch
@@ -136,8 +141,9 @@ no diff if nothing changed.
    the diff should match what you already saw on staging.
 4. The `apply` job pauses for required-reviewer approval. Approve
    after the plan looks right.
-5. The post-apply smoke job runs `/health` + an authenticated
-   `/pacticipants` call against the production hostname. Green = done.
+5. The post-apply smoke job runs the tokenless checks against the
+   production hostname: `/health` must report `storage: "ok"`, and an
+   unauthenticated `/pacticipants` must return 401. Green = done.
 
 ### Roll back production
 
@@ -161,16 +167,17 @@ For DO data corruption (rare; rollback alone won't fix), see
 ### Rotate the bearer token
 
 ```bash
-aws secretsmanager put-secret-value \
-  --secret-id "<your-secrets-prefix>/<workspace>/pact-broker-token" \
-  --secret-string "$(openssl rand -hex 32)"
+openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker-name>
 ```
 
-Then trigger the appropriate deploy workflow. Terraform reads the new
-value on apply and pushes it to the Worker via `wrangler secret put`.
-**Existing clients will start receiving 401 immediately after the
-deploy** — coordinate the publishing of the new token to consumer /
-provider CI before rotating.
+No deploy is needed — Worker secrets take effect on write, and they survive
+every subsequent deploy. **Existing clients start receiving 401 the moment
+the new value lands**, so publish the new token to consumer / provider CI
+*before* rotating.
+
+Terraform is not involved. It has no read access to this value, which is
+what allows the deploy pipeline to hold no secret-store credentials at
+all.
 
 ## Why the broker has no per-PR preview deploys
 

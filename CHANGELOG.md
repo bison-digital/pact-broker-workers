@@ -2,6 +2,106 @@
 
 All notable changes to `pact-broker-workers`.
 
+## 2.0.0 — 2026-08-01
+
+Removes the AWS dependency that had crept into the deployment path, and
+brings the whole toolchain current. **Breaking for fork operators** — the
+state backend, the secret model, and the required GitHub secrets all change.
+See [Migration](#migration-from-13x) below.
+
+### Removed
+
+- **AWS, entirely.** `infra/secrets.tf` (the `aws_secretsmanager_secret_version`
+  data source), the `hashicorp/aws` provider, the `aws_region` /
+  `terraform_state_bucket` / `secrets_prefix` variables, and the
+  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` repo secrets used as AWS
+  credentials.
+
+  The root of it was `terraform_data.worker_secret`, which read the bearer
+  token on every apply and piped it to `wrangler secret put`. Terraform is
+  convergent, so asserting "the Worker's secret matches the source of truth"
+  required reading the value during apply — which made CI a secret-reading
+  principal and required long-lived IAM keys. It also achieved nothing:
+  Cloudflare Worker secrets are durable and survive every deploy, so the
+  loop re-pushed an unchanged value each time.
+
+- **`SMOKE_TEST_BROKER_TOKEN`.** The post-deploy smoke test no longer needs a
+  token. Operators should delete this environment secret — it was a standing
+  copy of a live credential.
+
+- **`drizzle-kit`** (no config, no migrations directory, no script referenced
+  it) and the unused `@/*` tsconfig path alias.
+
+### Added
+
+- **`secrets.required` in `wrangler.jsonc.tmpl`.** Declares
+  `PACT_BROKER_TOKEN` by name without carrying its value, so
+  `wrangler deploy` fails if a Worker was never seeded rather than shipping a
+  broker that rejects every request. This replaces the guarantee
+  `worker_secret` used to provide.
+- **`/health` now probes the Durable Object**, returning
+  `{"status":"ok","storage":"ok"}` or a 503. It previously returned a static
+  literal, which proved only that the Worker booted. Since CI holds no token,
+  this is the deploy pipeline's only signal, so it has to mean something.
+- **`.oxfmtrc.json`.** Formatting was running on implicit defaults, leaving
+  every oxfmt release free to restyle the repo. Pins current style exactly.
+- **Type-aware linting** (`oxlint --type-aware`, unlocked by TypeScript 7).
+  Found a floating `blockConcurrencyWhile()` promise in the DO constructor.
+- **`pnpm-workspace.yaml`** for `onlyBuiltDependencies` — pnpm 10 blocks
+  lifecycle scripts by default, and workerd/esbuild need theirs.
+- **Dependabot `major` group**, so coupled majors arrive as one reviewable PR.
+
+### Changed
+
+- **Terraform state moves to Cloudflare R2.** The backend type stays `s3`,
+  which is the S3 *protocol* — Terraform has no native R2 backend, and the
+  protocol keeps the config portable to MinIO, B2, or Amazon S3. Credentials
+  now come from `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`, mapped onto the
+  `AWS_*` env names the protocol reads.
+- **Bearer token seeding is out-of-band**:
+  `openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker>`.
+  Rotation is the same command; it takes effect immediately with no deploy.
+- **Smoke test is tokenless**: `/health` must report `storage: "ok"`, and an
+  unauthenticated `/pacticipants` must return 401. The 401 assertion is new
+  coverage — nothing previously caught a broker accidentally serving data
+  without auth.
+- **Cloudflare Terraform provider** `= 5.19.0-beta.5` → `~> 5.22`.
+- **Node floor** `>=18.0.0` → `>=22.12.0`. The old floor was already violated
+  by the installed oxlint/oxfmt.
+- **Dependencies**: typescript 5.9 → 7.0.2 (dropping
+  `@typescript/native-preview`; `tsgo` → `tsc`), wrangler 3 → 4,
+  vitest 2 → 4 with `@cloudflare/vitest-pool-workers` 0.8 → 0.20,
+  zod 3 → 4, drizzle-orm 0.38 → 0.45.2, hono 4.10 → 4.12.33,
+  `@cloudflare/workers-types` 4 → 5, oxlint 1.61 → 1.76, oxfmt 0.42 → 0.61.
+
+  drizzle 0.45.2 carries a SQL-injection fix (CWE-89) in
+  `sql.identifier()`/`sql.as()`, neither of which this repo uses; hono
+  4.12.33 carries four advisories, none exploitable here.
+
+### Fixed
+
+- **Floating promise in `PactBrokerDO`'s constructor.**
+  `ctx.blockConcurrencyWhile()` was unmarked. Harmless in practice but
+  invisible to every check in the toolchain — and the DO fires webhooks with
+  retry loops, which is where a dropped promise disappears silently.
+- **Three dead type assertions.** Two `as WebhookEvent[]` casts became
+  redundant once zod 4 inferred `z.enum([...]).array()` precisely.
+
+### Migration from 1.3.x
+
+1. Create an R2 bucket for Terraform state and an R2 API token scoped to it.
+   Add `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` as repo secrets and delete
+   the AWS ones.
+2. Rewrite `infra/backend.hcl` from
+   [`infra/backend.hcl.example`](infra/backend.hcl.example) and migrate state
+   (`terraform init -migrate-state -backend-config=backend.hcl`).
+3. Seed the bearer token on each Worker with `wrangler secret put`. Use the
+   *existing* value from Secrets Manager to avoid a client-visible rotation.
+4. Delete the `SMOKE_TEST_BROKER_TOKEN` and `SECRETS_PREFIX` / `AWS_REGION`
+   entries from your GitHub Environments.
+5. Decommission the Secrets Manager entries and the S3 state bucket once a
+   deploy has gone green.
+
 ## 1.3.0 — 2026-05-06
 
 Documentation parity with the broader Cupa platform handover repos, plus

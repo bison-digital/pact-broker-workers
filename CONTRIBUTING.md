@@ -5,12 +5,15 @@
 ```bash
 pnpm install --frozen-lockfile
 pnpm run dev                  # renders wrangler.jsonc then runs wrangler dev
-pnpm run lint                 # oxlint (--deny-warnings)
+pnpm run lint                 # oxlint (--type-aware --deny-warnings)
 pnpm run format               # oxfmt write
 pnpm run format:check         # oxfmt check
-pnpm run type-check           # tsgo --noEmit
+pnpm run type-check           # tsc --noEmit
 pnpm run test:run             # vitest run (via @cloudflare/vitest-pool-workers)
 ```
+
+Requires **Node >= 22.12** (see `engines`) — wrangler and miniflare need
+22.x, oxlint and oxfmt need 22.12.
 
 Local dev requires a `.dev.vars` file with at minimum:
 
@@ -37,16 +40,38 @@ Edit `wrangler.jsonc.tmpl` for any static config changes.
 
 ## Code style
 
-- **Lint**: `oxlint` with `--deny-warnings`. Config at `.oxlintrc.json`.
-  Don't disable rules inline without a short comment on why.
-- **Format**: `oxfmt`. Enforced via `format:check` in CI.
-- **Types**: `tsgo --noEmit` (TypeScript's native-speed compiler, installed
-  as `@typescript/native-preview`). `strict: true` + `noUncheckedIndexedAccess`
-  are on by default; don't weaken them. Avoid `any` unless you've documented
-  a concrete reason in a single-line comment next to the cast.
+- **Lint**: `oxlint` with `--type-aware --deny-warnings`. Config at
+  `.oxlintrc.json`. Type-aware linting needs the `oxlint-tsgolint` binary
+  (a devDependency) and TypeScript 7. `no-floating-promises` is on and
+  matters here — the Durable Object fires webhooks with retry loops, where
+  a dropped promise fails silently. Don't disable rules inline without a
+  short comment on why.
+- **Format**: `oxfmt`. Enforced via `format:check` in CI. Style is pinned in
+  `.oxfmtrc.json` — without it, every oxfmt release is free to restyle the
+  repo. Change it deliberately, in its own commit.
+- **Types**: `tsc --noEmit` on TypeScript 7 (the native-speed compiler,
+  now shipped as stable `typescript` — the old `tsgo` /
+  `@typescript/native-preview` pairing is gone). `strict: true` +
+  `noUncheckedIndexedAccess` are on by default; don't weaken them. Avoid
+  `any` unless you've documented a concrete reason in a single-line comment
+  next to the cast.
+
+  Note: `typescript@7` ships only a `tsc` binary — there is no `tsserver`
+  until 7.1. If your editor is pinned to the workspace TypeScript
+  (`typescript.tsdk`), unpin it and use the editor's bundled version.
 - **Comments**: prefer well-named code over explanatory comments. When a
   comment is warranted, it describes *why*, not *what*.
-- **Tests**: co-locate unit tests as `*.test.ts` beside the code they cover.
+- **Tests**: all tests live in `test/`, named `*.test.ts`. Integration tests
+  drive the Worker through the helpers in `test/helpers.ts`; pure-function
+  tests are suffixed `*.unit.test.ts`.
+
+  Storage is isolated per test *file*, not per test, so scope fixtures with
+  names unique to the test that creates them and assert with
+  `toBeGreaterThanOrEqual` rather than exact counts on collections.
+
+  Outbound `fetch()` is intercepted by the `outboundService` handler in
+  `vitest.config.ts`, which throws on any URL it doesn't recognise. If a new
+  test needs to reach a different host, add it there.
 
 ## Infrastructure changes
 

@@ -18,7 +18,6 @@ flowchart LR
     Client["Pact CLI clients<br/>pact-broker-client / pactflow-client<br/>provider verifiers"] -->|"HTTPS<br/>Authorization: Bearer …"| CF[Cloudflare edge]
     CF -->|"Worker invocation"| Worker["pact-broker-workers<br/>Hono + auth + CORS"]
     Worker -->|"single DO instance<br/>(idFromName('pact-broker'))"| DO["PactBrokerDO<br/>Durable Object<br/>(SQLite-backed)"]
-    SecretsMgr[("AWS Secrets Manager<br/>&lt;secrets_prefix&gt;/&lt;workspace&gt;/pact-broker-token")] -. read at terraform apply .-> Worker
     DO -. webhooks (best-effort) .-> External["Webhook targets<br/>(operator-defined HTTPS endpoints)"]
 ```
 
@@ -95,10 +94,14 @@ links and embedded relation shapes.
 ## Auth model
 
 - One bearer token per Worker, named `PACT_BROKER_TOKEN`.
-- Source of truth: AWS Secrets Manager
-  (`<secrets_prefix>/<workspace>/pact-broker-token`). Terraform reads
-  the secret at apply time and pushes it into the Worker via
-  `wrangler secret put`. The token is never in HCL or `wrangler.jsonc`.
+- Source of truth: the Cloudflare Worker secret itself. It is seeded once
+  with `wrangler secret put PACT_BROKER_TOKEN --name <worker>` and lives
+  nowhere else — not in HCL, not in `wrangler.jsonc`, not in Terraform
+  state, and not in CI. Worker secrets are durable across deploys, so
+  there is no value to re-push and nothing to converge.
+- `wrangler.jsonc.tmpl` declares the token under `secrets.required`, which
+  carries the *name* but never the value. `wrangler deploy` fails if the
+  Worker has no such secret set.
 - Optional `ALLOW_PUBLIC_READ=true` mode lets unauthenticated GET / HEAD
   through. Useful for read-only badge embedding or shared dashboards.
   Still rejects writes without auth.

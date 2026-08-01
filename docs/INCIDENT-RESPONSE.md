@@ -41,11 +41,8 @@ WRANGLER_ENV=production wrangler tail \
 # Re-deploy a previous SHA (rollback)
 gh workflow run deploy-production.yml --ref <previous-good-sha>
 
-# Rotate the bearer token
-aws secretsmanager put-secret-value \
-  --secret-id "${SECRETS_PREFIX}/${WORKSPACE}/pact-broker-token" \
-  --secret-string "$(openssl rand -hex 32)"
-gh workflow run deploy-production.yml --ref main
+# Rotate the bearer token (takes effect immediately — no deploy needed)
+openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name "$WORKER_NAME"
 ```
 
 ---
@@ -93,28 +90,32 @@ access log shows `status=401` on previously-working clients.
 The bearer token in clients no longer matches `PACT_BROKER_TOKEN` in
 the Worker. Almost always one of:
 
-1. **Mid-rotation drift.** Token was rotated in AWS Secrets Manager
-   but the deploy that pushes it to the Worker hasn't run yet — or
-   ran but the consumer/provider pipelines still have the old token.
-2. **Deploy applied without the secret read.** A failed Secrets Manager
-   read at apply time can leave the Worker with a stale value.
+1. **Mid-rotation drift.** The Worker secret was rotated but the
+   consumer/provider pipelines still hold the old token. Rotation takes
+   effect the instant it is written, so this window opens immediately —
+   there is no deploy step to lag behind.
+2. **Wrong Worker.** `wrangler secret put` without `--name` targets the
+   name in `wrangler.jsonc`, which is generated per workspace. Rotating
+   staging while debugging production produces exactly this symptom.
 
 ### Fix
 
 ```bash
-# 1. Confirm what the Worker currently has
-WRANGLER_ENV=production wrangler secret list
+# 1. Confirm the Worker actually has the secret set
+#    (lists names only — Cloudflare will not return the value)
+wrangler secret list --name "$WORKER_NAME"
 
-# 2. Re-apply terraform — re-reads from Secrets Manager and re-pushes
-gh workflow run deploy-production.yml --ref main
+# 2. If it is missing or suspect, re-set it. Effective immediately;
+#    no deploy required, and the value survives later deploys.
+openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name "$WORKER_NAME"
 
-# 3. Confirm clients have the same value
-# (whatever provisioning system you use for consumer/provider CI)
+# 3. Push the same value to consumer/provider CI
+# (whatever provisioning system you use)
 ```
 
-If you're rotating deliberately (suspected leak), update Secrets
-Manager **first**, redeploy, then update consumer/provider CI to use
-the new token. Brief 401s during the rotation window are expected.
+If you are rotating deliberately (suspected leak), publish the new token to
+consumer/provider CI **first**, then write it to the Worker — the Worker
+write is the cutover. Brief 401s during the window are expected.
 
 ---
 

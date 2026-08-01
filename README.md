@@ -21,7 +21,7 @@ Cloudflare Worker (Hono + auth + CORS)
 - Verification results and `pacts-for-verification`
 - Matrix, `can-i-deploy`, deployments/environments tracking
 - Zero external data store — all state in DO-local SQLite
-- Turnkey production deployment via Terraform + GitHub Actions
+- Turnkey production deployment via Terraform + GitHub Actions — Cloudflare and GitHub only, no third-party cloud
 
 ## Documentation
 
@@ -33,7 +33,7 @@ Cloudflare Worker (Hono + auth + CORS)
 | [`docs/INCIDENT-RESPONSE.md`](docs/INCIDENT-RESPONSE.md) | On-call | Triage playbooks for the common failure modes: 401 spikes, payload-too-large, DO storage near cap, custom-domain unbinding, complete outage. |
 | [`docs/UPGRADING.md`](docs/UPGRADING.md) | Fork operators | Pulling tagged upstream releases into your fork. The manual sync playbook with worked examples and conflict-resolution guidance. |
 | [`docs/PUBLISH-ORDER.md`](docs/PUBLISH-ORDER.md) | Consumers / providers | Why consumer-pact publishing must precede provider PRs, and how to wire `can-i-deploy` to close the loop. |
-| [`infra/README.md`](infra/README.md) | Operators | Terraform inputs, AWS Secrets Manager bootstrap, plan/apply commands, backup considerations. |
+| [`infra/README.md`](infra/README.md) | Operators | Terraform inputs, R2 state backend, seeding the bearer token, plan/apply commands, backup considerations. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Maintainers, contributors | Local workflow, code style, infra-agnostic conventions, releases. |
 
 ## Quick start (local development)
@@ -55,7 +55,8 @@ Production deployment is driven by **Terraform** + **GitHub Actions**. The `infr
 See [`infra/README.md`](infra/README.md) for the full walkthrough, including:
 
 - required GitHub Actions vars/secrets
-- the AWS Secrets Manager bootstrap command
+- the R2 state-backend setup
+- how to seed and rotate the bearer token
 - plan/apply commands for workstation runs
 - the three GitHub Actions workflows (`ci.yml`, `deploy-staging.yml`, `deploy-production.yml`)
 
@@ -63,8 +64,8 @@ The three workflows enforce a consistent shape:
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `ci.yml` | PR | lint / test / type-check / `terraform plan` on staging |
-| `deploy-staging.yml` | push to `main` | auto-apply to staging, `/health` + authenticated smoke |
+| `ci.yml` | PR | format / lint / type-check / test / `terraform plan` on staging |
+| `deploy-staging.yml` | push to `main` | auto-apply to staging, tokenless `/health` + 401 smoke |
 | `deploy-production.yml` | manual dispatch | plan → required-reviewer gate → apply → smoke |
 
 ## Forking for your organisation
@@ -77,18 +78,17 @@ This repository is the **upstream** for the Pact Broker product. To run the brok
    git remote add upstream git@github.com:bison-digital/pact-broker-workers.git
    ```
 
-2. **Populate your GitHub Environments** (`staging` and `production`) with the vars and secrets listed in [`infra/README.md`](infra/README.md#required-inputs). Repo-level secrets (AWS + Cloudflare credentials) go at repo scope; per-workspace values go at environment scope.
+2. **Populate your GitHub Environments** (`staging` and `production`) with the vars and secrets listed in [`infra/README.md`](infra/README.md#required-inputs). Repo-level secrets (R2 + Cloudflare credentials) go at repo scope; per-workspace values go at environment scope.
 
-3. **Seed your bearer token** in AWS Secrets Manager, once per workspace:
+3. **Seed your bearer token**, once per Worker. This never passes through Terraform or CI:
 
    ```bash
-   aws secretsmanager create-secret \
-     --name "<your-secrets-prefix>/<workspace>/pact-broker-token" \
-     --secret-string "$(openssl rand -hex 32)" \
-     --recovery-window-in-days 0
+   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker-name>
    ```
 
-4. **Create `infra/backend.hcl`** in your fork pointing at your S3 state bucket (see [`infra/backend.hcl.example`](infra/backend.hcl.example)). This file is gitignored — safe to commit on a private fork if you prefer, but not required.
+   Worker secrets survive every deploy, so rotation is the same command again. `wrangler deploy` fails if a Worker was never seeded, so you cannot accidentally ship an unconfigured broker.
+
+4. **Create `infra/backend.hcl`** in your fork pointing at your R2 state bucket (see [`infra/backend.hcl.example`](infra/backend.hcl.example)). This file is gitignored — safe to commit on a private fork if you prefer, but not required.
 
 5. **Run CI.** Push a trivial change to a PR branch to verify `ci.yml` green-lights. Merge to `main` to deploy staging. Run `deploy-production.yml` manually when ready.
 
@@ -115,7 +115,7 @@ vars. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the convention.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `PACT_BROKER_TOKEN` | Bearer token. **Secret** — sourced from AWS Secrets Manager by Terraform, pushed to the Worker via `wrangler secret put`. | required |
+| `PACT_BROKER_TOKEN` | Bearer token. **Secret** — set once with `wrangler secret put`; never held by Terraform or CI. | required |
 | `ALLOW_PUBLIC_READ` | If `"true"`, `GET`/`HEAD` requests bypass bearer auth. | `"false"` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated list of origins allowed by CORS. Unset = permissive (`*`). Once you host the HAL UI on a known domain, set this to that domain so browsers can't talk to the broker from anywhere. | `""` (permissive) |
 | `PUBLIC_BADGES` | Set to `"false"` to require a bearer token on `GET /pacts/provider/{p}/consumer/{c}/badge`. Any other value leaves badges public (the usual README-embed case). | `"true"` |
