@@ -11,11 +11,20 @@ import {
 
 const PROVIDER = "fv-provider";
 
+/**
+ * Every fixture write is asserted.
+ *
+ * These helpers return a status that used to be discarded, so a failed setup
+ * surfaced much later as an opaque "expected 0 to be greater than or equal to
+ * 1" in whichever test happened to depend on the missing row — with no
+ * indication that the write, not the query, was at fault. Failing here instead
+ * names the exact call that broke.
+ */
 async function publishSetup(): Promise<void> {
-  await publishPact("fv-c1", PROVIDER, "1.0.0", { branch: "main" });
-  await publishPact("fv-c1", PROVIDER, "2.0.0", { branch: "feature/x" });
-  await tagVersion("fv-c1", "1.0.0", "prod");
-  await publishPact("fv-c2", PROVIDER, "1.0.0", { branch: "main" });
+  expect((await publishPact("fv-c1", PROVIDER, "1.0.0", { branch: "main" })).status).toBe(201);
+  expect((await publishPact("fv-c1", PROVIDER, "2.0.0", { branch: "feature/x" })).status).toBe(201);
+  expect(await tagVersion("fv-c1", "1.0.0", "prod")).toBe(201);
+  expect((await publishPact("fv-c2", PROVIDER, "1.0.0", { branch: "main" })).status).toBe(201);
 }
 
 describe("for-verification", () => {
