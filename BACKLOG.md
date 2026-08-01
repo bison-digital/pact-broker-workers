@@ -59,10 +59,12 @@ Integration + unit tests live under `test/` — auth middleware, input validatio
 - **Verifications — edge cases.** Multiple verifications per pact, latest-verification selection, success-after-failure.
 - **Environments + deployments — in depth.** PUT/GET/DELETE env, deploy + undeploy, `isVersionDeployed`, cross-environment `deployed` selector.
 - **Selector combinations in `for-verification`.** Multiple selectors on one request, pending-flag handling, notices content assertions.
-- **Coverage reporting — blocked upstream.** `@cloudflare/vitest-pool-workers` 0.8.x doesn't yet instrument code running in the Workers isolate, so v8/istanbul coverage reports 0% for integration tests. Revisit when the pool adds coverage (or split unit tests into a Node pool project).
+- **Coverage reporting — still blocked upstream (re-tested on pool 0.20.1, 2026-08-01).** `@vitest/coverage-v8` now fails hard rather than reporting a misleading 0%: the Workers isolate has no `node:inspector` Session, so the run aborts with `ERR_METHOD_NOT_IMPLEMENTED` before any test executes. Do **not** wire `--coverage` into CI. Revisit when the pool ships its own instrumentation, or split the pure-function tests (`*.unit.test.ts`) into a separate Node-pool project where v8 coverage does work.
 
 ### Durable-object state isolation note
-`@cloudflare/vitest-pool-workers` defaults to `isolatedStorage: true`, giving each test a fresh DO namespace. If a future test file needs to share state across tests (e.g. a large setup in `beforeAll`), scope state with unique pacticipant names (current pattern in `for-verification.test.ts`).
+**Changed in pool 0.20:** the `isolatedStorage` option is gone and storage is now isolated per test *file*, not per test. Mutations from one `it()` persist into the next in the same file.
+
+The suite already survives this because fixtures use names unique to the test that creates them (`c1`/`p1`, `c2`/`p2`, `badge-c` vs `badge-fc`, …) and collection assertions use `toBeGreaterThanOrEqual` rather than exact counts. Keep both habits — they are now load-bearing rather than merely tidy. `for-verification.test.ts` deliberately shares a `beforeAll` fixture across its tests, which is the pattern this isolation model supports.
 
 ## Not goals (intentionally scoped out)
 
