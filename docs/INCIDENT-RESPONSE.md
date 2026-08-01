@@ -51,9 +51,14 @@ openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name "$WORKER_NAM
 
 **Symptom:** `curl /health` returns 5xx, or times out.
 
-`/health` is the simplest possible endpoint — it doesn't even reach the
-DO. A failure here means the Worker isn't running, the route binding is
-broken, or Cloudflare itself is degraded.
+`/health` probes the Durable Object (a `SELECT 1` against its SQLite), so a
+failure here is broader than it used to be. It means one of: the Worker isn't
+running, the route binding is broken, the DO binding or its storage is
+unreachable, or Cloudflare itself is degraded.
+
+Read the body to tell those apart — a 503 with `"storage": "error"` means the
+Worker is up and the DO round-trip failed, which is a different problem from
+no response at all.
 
 ### Step 1 — Is it the route or the Worker?
 
@@ -281,24 +286,28 @@ error page; the workers.dev URL works fine.
 
 ### Cause
 
-The Cloudflare custom-domain binding is owned by Terraform
-(`cloudflare_workers_custom_domain.pact_broker` in `infra/main.tf`). The
-binding can drift if someone hand-edited it via the Cloudflare dashboard
-or if a Terraform apply was killed mid-create.
+The custom domain is declared in `wrangler.jsonc` (rendered from `DOMAIN`)
+and created by `wrangler deploy`. It can drift if someone removed it via
+the Cloudflare dashboard, or if `DOMAIN` was changed or unset in the
+GitHub Environment — an empty `DOMAIN` renders `"routes": []`, and a
+deploy then leaves the Worker with no custom domain at all.
 
 ### Fix
 
 ```bash
-# 1. Inspect current state
-terraform -chdir=infra state show cloudflare_workers_custom_domain.pact_broker
+# 1. Confirm what the Worker currently has bound
+wrangler deployments list --name "$WORKER_NAME"
 
-# 2. Re-apply (CI or workstation; CI preferred for production)
+# 2. Confirm DOMAIN is still set on the environment
+gh variable list --env production
+
+# 3. Re-deploy — wrangler recreates the binding idempotently
 gh workflow run deploy-production.yml --ref main
 ```
 
-Terraform is idempotent here — a re-apply re-creates the binding. If
-the dashboard shows a phantom CNAME for the hostname pointing at a
-deleted Worker, delete it manually before re-applying.
+If the dashboard shows a phantom CNAME for the hostname pointing at a
+deleted Worker, delete it manually before re-deploying — wrangler will
+not overwrite an existing CNAME.
 
 ---
 
@@ -327,16 +336,27 @@ While the rollback runs, capture:
   has this for the bad deploy)
 - Most recent worker tail output before the outage
 - Any Cloudflare incidents on the status page in the last hour
-- Most recent Terraform plan (if a deploy was in flight)
+- The deploy preview from the `preflight` job of the last production run
+  (bindings and bundle size for the deployed commit)
 
-### Step 3 — Don't bypass Terraform / wrangler
+### Step 3 — Prefer `wrangler rollback` over a hand-deploy
 
-If the rollback workflow itself fails, don't manually
-`wrangler deploy` from a workstation against production. Terraform
-holds the auth-token + custom-domain state; a hand-deploy can leave
-state divergent and create a follow-on outage. Escalate first; the
-companion proxy repo has a documented case where a manual deploy
-during an incident took twice as long to fully recover.
+If the rollback workflow itself fails, the fastest safe move is
+Cloudflare's own version rollback rather than a hand-built deploy:
+
+```bash
+wrangler rollback --name "$WORKER_NAME"
+```
+
+That reverts to the previous deployed version without rendering config or
+rebuilding, so it cannot introduce a new variable.
+
+A manual `wrangler deploy` from a workstation is a last resort. It is no
+longer state-divergent — there is no Terraform state to diverge from — but
+it deploys whatever is in your working tree with whatever environment
+variables your shell happens to hold, which during an incident is exactly
+the wrong source of truth. It also bypasses the required-reviewer gate.
+Escalate first.
 
 ### Step 4 — When Cloudflare itself is the cause
 

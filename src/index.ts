@@ -64,8 +64,8 @@ app.use("*", async (c, next) => {
 /**
  * Per-IP rate limiting.
  *
- * Replaces the zone-level `http_ratelimit` ruleset that Terraform used to
- * provision. Two deliberate trade-offs came with that move:
+ * Replaces a zone-level `http_ratelimit` ruleset that a Terraform layer used
+ * to provision (removed in 2.0.0). Two deliberate trade-offs came with that:
  *
  *   - This runs *inside* the Worker, so a throttled request still costs an
  *     invocation. The zone ruleset rejected at the edge.

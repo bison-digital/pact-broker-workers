@@ -1,168 +1,111 @@
 # CI / CD — Operator Handbook
 
-The broker ships through a lightweight three-workflow GitHub Actions
-pipeline. This document is the operator reference for what each workflow
-does, what configuration it needs, and how to drive a deploy / rollback.
+This project ships two different things, and it is worth being clear about
+which is which before you configure anything.
 
-## Workflows
+| | Audience | Runs |
+| --- | --- | --- |
+| **`ci.yml`** | The project itself | Every PR and push, on this repo and every fork. Holds no credentials and deploys nothing. You do not configure it. |
+| **`deploy-staging.yml` / `deploy-production.yml`** | Operators | A **reference implementation** for deploying your own broker. Inert until you configure a GitHub Environment. |
 
-| Workflow                | Trigger                       | Effect                                                                                                                                                                                                                                            |
-| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`                | PR to main, push to main      | Lint, format check, type-check, vitest, `wrangler.jsonc.tmpl` route-block guard. If `vars.INFRA_DEPLOY_ENABLED=true` is set, also runs `terraform plan` against the staging workspace and posts the plan as a PR comment.                          |
-| `deploy-staging.yml`    | push to main, manual dispatch | Re-runs the full check suite, then (when `vars.INFRA_DEPLOY_ENABLED=true`) terraform-applies to the `staging` workspace and runs the tokenless smoke test against the staging URL.                                                               |
-| `deploy-production.yml` | manual dispatch               | Re-runs checks, terraform plan, **required-reviewer gate** (the `production` GitHub Environment), terraform apply to the `production` workspace, post-apply health + smoke. Reviewers see the plan summary on the run page before approving.       |
+Earlier versions blurred these into one pipeline gated behind an
+`INFRA_DEPLOY_ENABLED` variable. That flag is gone: the project's own CI
+always runs, and the deploy workflows are yours to adopt, adapt, or delete.
 
-The `INFRA_DEPLOY_ENABLED` switch is intentional: upstream
-(`bison-digital/pact-broker-workers`) doesn't carry deployment
-credentials, so the deploy steps no-op. Operator forks set the var to
-`true` and add their environment vars/secrets — deploy then activates.
+## What a deploy actually needs
+
+One credential and a handful of values. There is no Terraform, no state
+backend, no bucket, and no second cloud account.
+
+**Repo-level secret**
+
+| Secret | Purpose |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Workers Scripts: Edit, plus Workers Routes: Edit and DNS: Edit on the zone (wrangler creates the custom domain). |
+
+**Per-environment vars** — create one GitHub Environment per workspace
+(`staging`, `production`):
+
+| Var | Required | Meaning |
+| --- | --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | yes | Account that owns the Worker |
+| `DOMAIN` | yes | Hostname the Worker binds to, e.g. `pact-broker.example.com` |
+| `WORKER_NAME` | yes | Worker name, e.g. `pact-broker-production` |
+| `ALLOW_PUBLIC_READ` | no | `"true"` lets GET/HEAD skip auth. Default `"false"` |
+| `CORS_ALLOWED_ORIGINS` | no | Comma-separated origins. Empty = permissive |
+| `PUBLIC_BADGES` | no | `"false"` requires auth on badges. Default public |
+| `MUTATING_RATE_LIMIT` | no | Writes per IP per minute. Default `60` |
+| `READ_RATE_LIMIT` | no | Reads per IP per minute. Default `600` |
+
+The `production` environment must also carry a **required-reviewer rule**
+(Settings → Environments → production → Required reviewers). That rule *is*
+the approval gate. Without it, production deploys unattended.
+
+**Not here: the broker's bearer token.** CI never reads or writes it. See
+[Seeding the bearer token](#seeding-the-bearer-token).
+
+Missing a required var? The workflow fails on a named-variable error before
+touching Cloudflare, rather than deploying something half-configured.
 
 ## End-to-end flow
 
 ```
-            ┌───────────────────┐
-            │  PR opened / push │
-            └─────────┬─────────┘
-                      │
-                      ▼
-              ╔══════════════╗      checks fail → block merge
-              ║   ci.yml     ║─────▶ wrangler routes-block guard
-              ╚══════╤═══════╝       terraform plan posted as PR comment
-                     │ merge to main  (only on operator forks)
-                     ▼
-       ┌──────────────────────────┐
-       │   deploy-staging.yml     │      checks again
-       │   (auto on push to main) │      terraform apply → staging workspace
-       │                          │      smoke: /health storage:ok + 401
-       └────────────┬─────────────┘
-                    │
-                    │ human verifies staging
-                    │ (visit /ui, sanity-check a few endpoints)
-                    ▼
-       ┌──────────────────────────┐
-       │   deploy-production.yml  │      reviewer-approval gate
-       │   (manual dispatch)      │      terraform apply → production workspace
-       │                          │      smoke: /health storage:ok + 401
-       └──────────────────────────┘
+        ┌───────────────────┐
+        │  PR opened / push │
+        └─────────┬─────────┘
+                  ▼
+          ╔══════════════╗   format / lint / type-check / test
+          ║   ci.yml     ║   + operator-shaped config render
+          ╚══════╤═══════╝     and wrangler deploy --dry-run
+                 │ merge to main
+                 ▼
+   ┌──────────────────────────┐
+   │   deploy-staging.yml     │  checks again on the exact SHA
+   │   (auto on push to main) │  wrangler deploy
+   │                          │  smoke: /health storage:ok + 401
+   └────────────┬─────────────┘
+                │ human verifies staging (/ui, a few endpoints)
+                ▼
+   ┌──────────────────────────┐
+   │  deploy-production.yml   │  preflight: checks + dry-run preview
+   │  (manual dispatch)       │  ── required-reviewer gate ──
+   │                          │  wrangler deploy
+   │                          │  smoke: /health storage:ok + 401
+   └──────────────────────────┘
 ```
 
-There is no separate "release-publish" workflow and no image-promotion
-step — the broker has no Docker artifact, just a Worker bundle. Each
-deploy is a fresh `wrangler deploy` from the same source commit.
-Promotion staging → production is a re-apply of the same `main` SHA into
-the `production` Terraform workspace, gated by the reviewer rule.
+Each deploy is a fresh `wrangler deploy` from the same source commit.
+Promotion staging → production re-deploys the same `main` SHA into the
+production Worker, behind the reviewer rule.
 
-## Required GitHub configuration
+### Why the reviewer sees a dry-run, not a plan
 
-### Repo-level
+The `preflight` job runs unattended *before* the gate and publishes
+`wrangler deploy --dry-run` output to the run summary — the binding list,
+the bundle size, and any build failure. `--dry-run` needs no credentials and
+contacts nothing.
 
-**Vars**:
+This is what replaced the `terraform plan` artifact. It answers a narrower
+question — "does this build, and are the bindings what I expect" rather than
+"what will change" — because a Worker deploy has no diff to show: it either
+replaces the script or it does not. Anything genuinely stateful (the Durable
+Object and its data) is untouched by a deploy either way.
 
-| Var                       | Used by                                                                                            |
-| ------------------------- | -------------------------------------------------------------------------------------------------- |
-| `INFRA_DEPLOY_ENABLED`    | Gates every deploy step. Set to `true` on operator forks; leave unset on upstream / personal forks. |
-| `TERRAFORM_STATE_BUCKET`  | Every workflow that runs `terraform` — the R2 bucket holding state                                  |
-| `CLOUDFLARE_ACCOUNT_ID`   | Every workflow that runs `terraform`; also forms the R2 state endpoint                              |
+## Seeding the bearer token
 
-**Secrets**:
+Once per Worker, from a workstation. This value never passes through CI:
 
-| Secret                  | Used by                                       |
-| ----------------------- | --------------------------------------------- |
-| `R2_ACCESS_KEY_ID`      | Terraform state backend (R2)                  |
-| `R2_SECRET_ACCESS_KEY`  | Terraform state backend (R2)                  |
-| `CLOUDFLARE_API_TOKEN`  | Every terraform step (Workers / DNS)          |
+```bash
+openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name pact-broker-production
+```
 
-The workflows map the R2 pair onto `AWS_ACCESS_KEY_ID` /
-`AWS_SECRET_ACCESS_KEY`, which is what Terraform's S3-protocol backend
-reads. That is a naming convention of the protocol — there is no AWS
-account involved anywhere in this pipeline.
+Worker secrets are durable — they survive every subsequent deploy, and
+wrangler only removes one on an explicit `wrangler secret delete`. So there
+is nothing for a pipeline to re-push, and no reason for CI to hold the value.
 
-These can be overridden at the GH Environment level if staging and
-production use different Cloudflare accounts.
-
-**Notably absent:** the broker's bearer token. CI never reads or writes it.
-See [Rotate the bearer token](#rotate-the-bearer-token).
-
-### Per-environment (`staging`, `production`)
-
-Each GH Environment must hold:
-
-**Vars**: `CLOUDFLARE_ACCOUNT_ID`, `DOMAIN`, `WORKER_NAME`,
-`TF_WORKSPACE`. The `production` environment must also have the
-**required-reviewer protection rule** configured. Without it,
-`deploy-production.yml` will apply unconditionally — which defeats the
-gating model.
-
-**Secrets**: `CLOUDFLARE_ZONE_ID` (zone differs between operators; some
-also override the R2 / Cloudflare credentials per environment).
-
-The full list of inputs lives in
-[`infra/README.md`](../infra/README.md#required-inputs). Treat that file as
-the canonical reference; this page only summarises.
-
-## Runbooks
-
-### First-time setup of a new operator fork
-
-1. Fork `bison-digital/pact-broker-workers` to your org.
-2. Set repo-level vars/secrets above.
-3. Create `staging` and `production` GH Environments with their
-   per-environment vars/secrets. Add the required-reviewer rule to
-   `production`.
-4. Seed the bearer token — once per Worker, from your workstation:
-   ```bash
-   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name pact-broker-staging
-   openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name pact-broker-production
-   ```
-   Nothing in CI reads this value. If you skip this step, `wrangler deploy`
-   fails on the `secrets.required` check rather than shipping a broker that
-   rejects every request.
-5. Set `vars.INFRA_DEPLOY_ENABLED=true` at repo scope.
-6. Push a no-op commit to `main` (or trigger `deploy-staging.yml` via
-   manual dispatch). Watch the staging deploy succeed, then dispatch
-   `deploy-production.yml` for the first production apply.
-
-### Deploy to staging
-
-Auto on push to `main`. To re-trigger without a new commit:
-
-- Actions → "Deploy to Staging" → Run workflow → branch `main`.
-
-The deploy job is idempotent — re-running against the same SHA produces
-no diff if nothing changed.
-
-### Deploy to production
-
-1. Confirm staging is green for the SHA you want to ship — check the
-   most recent `deploy-staging.yml` run. Visit `/ui` and the matrix
-   badge for a sanity check.
-2. Actions → "Deploy to Production" → Run workflow → branch `main`.
-3. The `plan` job runs unattended. Read its summary on the run page —
-   the diff should match what you already saw on staging.
-4. The `apply` job pauses for required-reviewer approval. Approve
-   after the plan looks right.
-5. The post-apply smoke job runs the tokenless checks against the
-   production hostname: `/health` must report `storage: "ok"`, and an
-   unauthenticated `/pacticipants` must return 401. Green = done.
-
-### Roll back production
-
-There is no automated rollback workflow. The `wrangler deploy` model
-means a rollback is "redeploy the previous SHA":
-
-1. Identify the previous good SHA on `main` (look at recent
-   `deploy-production.yml` runs — the SHA they applied is in the
-   summary).
-2. From a local checkout of the operator fork:
-   ```bash
-   git fetch origin
-   git checkout <previous-good-sha>
-   ```
-3. Actions → "Deploy to Production" → Run workflow → choose the
-   previous SHA as the ref. Approve the reviewer gate.
-
-For DO data corruption (rare; rollback alone won't fix), see
-[`docs/INCIDENT-RESPONSE.md`](INCIDENT-RESPONSE.md#do-storage-recovery).
+`wrangler.jsonc.tmpl` declares the token under `secrets.required`, so
+**`wrangler deploy` fails** if a Worker was never seeded, rather than shipping
+a broker that rejects every request.
 
 ### Rotate the bearer token
 
@@ -170,25 +113,71 @@ For DO data corruption (rare; rollback alone won't fix), see
 openssl rand -hex 32 | wrangler secret put PACT_BROKER_TOKEN --name <worker-name>
 ```
 
-No deploy is needed — Worker secrets take effect on write, and they survive
-every subsequent deploy. **Existing clients start receiving 401 the moment
-the new value lands**, so publish the new token to consumer / provider CI
-*before* rotating.
+Effective immediately; no deploy needed. **Existing clients start receiving
+401 the moment the new value lands**, so publish the new token to
+consumer/provider CI *before* rotating.
 
-Terraform is not involved. It has no read access to this value, which is
-what allows the deploy pipeline to hold no secret-store credentials at
-all.
+## Runbooks
 
-## Why the broker has no per-PR preview deploys
+### First-time setup
 
-The companion middleware uses per-PR Cloudflare Worker preview
-environments. The broker doesn't, by design:
+1. Fork `bison-digital/pact-broker-workers` to your org.
+2. Add `CLOUDFLARE_API_TOKEN` as a repo secret.
+3. Create `staging` and `production` GitHub Environments with the vars above.
+   Add the required-reviewer rule to `production`.
+4. Seed the bearer token on each Worker (above).
+5. Push to `main`. Staging deploys automatically. Dispatch
+   `deploy-production.yml` when you are happy.
 
-- A broker preview would need its own Durable Object namespace seeded
-  with realistic pact data, plus webhook / verification fixtures. The
-  cost-to-value of maintaining that for every PR is poor.
-- Vitest covers the route surface, the auth model, and the HAL shape.
-  Most regressions are caught by the unit suite long before staging.
-- Staging is the integration environment. Promote SHA → staging → eyes
-  → production. If a regression slips past staging, the rollback path
-  (redeploy previous SHA) takes ~2 minutes.
+The first deploy creates the Worker, the Durable Object namespace, the custom
+domain, and its certificate. Nothing to provision beforehand.
+
+### Deploy to staging
+
+Automatic on push to `main`. To re-trigger without a commit: Actions →
+"Deploy to Staging" → Run workflow. Re-running against the same SHA is
+harmless.
+
+### Deploy to production
+
+1. Confirm staging is green for the SHA you want. Visit `/ui`.
+2. Actions → "Deploy to Production" → Run workflow → branch `main`.
+3. `preflight` runs unattended. Read the deploy preview in the run summary.
+4. Approve the reviewer gate.
+5. The smoke test runs `/health` and the unauthenticated 401 check.
+
+### Roll back production
+
+A rollback is "redeploy the previous SHA":
+
+1. Find the last good SHA from a previous `deploy-production.yml` run.
+2. Actions → "Deploy to Production" → Run workflow → choose that ref.
+3. Approve the gate.
+
+Cloudflare also keeps prior Worker versions — `wrangler rollback --name <worker>`
+reverts to the previous deployment immediately, which is faster if you need
+to stop the bleeding before working out which commit to ship.
+
+**Neither touches Durable Object data.** For DO corruption see
+[`docs/INCIDENT-RESPONSE.md`](INCIDENT-RESPONSE.md).
+
+## Why no per-PR preview deploys
+
+- A broker preview needs its own DO namespace seeded with realistic pact
+  data plus webhook and verification fixtures. Poor cost-to-value per PR.
+- Vitest covers the route surface, auth model, rate limiting and HAL shape.
+  Most regressions die there.
+- Staging is the integration environment, and rollback takes ~2 minutes.
+
+## Adapting this to another CI system
+
+Nothing here is GitHub-specific except the workflow syntax and the reviewer
+gate. The whole deploy is:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run deploy          # renders wrangler.jsonc, then wrangler deploy
+```
+
+with `CLOUDFLARE_API_TOKEN` and the environment variables in the table above.
+Any runner that can set environment variables and run Node will do.

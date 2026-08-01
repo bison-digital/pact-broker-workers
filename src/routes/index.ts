@@ -50,9 +50,12 @@ app.get("/", (c) => {
  * available; a static 200 would only prove the Worker booted, not that the
  * DO binding resolves or that its SQLite storage is readable.
  *
- * The trade-off is that an unauthenticated caller can wake and query the DO.
- * The probe is O(1) (see PactBrokerDO.healthCheck) and the edge rate-limit
- * ruleset in infra/main.tf covers the read path.
+ * The trade-off is that an unauthenticated caller can wake and query the DO,
+ * and this route is deliberately exempt from rate limiting (see the middleware
+ * in src/index.ts) so a throttled broker stays diagnosable and cannot fail its
+ * own deploy smoke test. What keeps that safe is the probe itself: a single
+ * `SELECT 1 ... LIMIT 1`, O(1) regardless of how much data the broker holds.
+ * See PactBrokerDO.healthCheck.
  */
 app.get("/health", async (c) => {
   try {
