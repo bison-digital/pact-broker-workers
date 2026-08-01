@@ -35,6 +35,35 @@ Weekly updates configured for `npm`, `github-actions` (grouped), and `terraform`
 ### Secret scanning posture
 Verify GitHub's native secret scanning is enabled on this public repo (Settings → Code security). If a downstream fork publishes pre-review, a stray `PACT_BROKER_TOKEN` in a commit would ship. Consider also a `gitleaks-action` run in CI as a second line.
 
+### Worker bundle doubled under zod 4 (diagnosed, not fixed)
+
+`wrangler deploy --dry-run` went from 435.91 KiB (81.29 KiB gzip) to 891.53 KiB
+(148.14 KiB gzip) across the 2.0.0 upgrade. Essentially all of it is zod:
+
+| segment | size |
+| --- | --- |
+| zod locales (every language it ships) | 278.7 KiB |
+| zod core + classic | 217.9 KiB |
+| zod JSON-Schema conversion | 48.1 KiB |
+| drizzle-orm | 167.3 KiB |
+| `src/` | 99.9 KiB |
+| hono | 64.6 KiB |
+
+The locales and the JSON-Schema machinery are dead weight here — every
+validation message in `src/lib/validation.ts` is a custom English string, and
+nothing calls `toJSONSchema`.
+
+zod declares `sideEffects: false`, so this is not a bundler misconfiguration.
+The cause is `import { z } from "zod"`: pulling the whole `z` namespace makes
+`z.locales` a reachable property, so esbuild cannot drop it. Switching to
+named imports (`import { string, object } from "zod"`) should let it
+tree-shake, at the cost of touching every validator call site in
+`src/lib/validation.ts` and `src/routes/webhooks.ts`.
+
+**Not urgent.** Workers limits are on the gzipped size — 148 KiB against 3 MB
+(free) / 10 MB (paid) — so this is a cold-start/parse-time consideration, not
+a deployment risk. Worth doing when someone is next in those files.
+
 ## Operational gaps
 
 ### Durable Object SQLite snapshot / export
