@@ -1,5 +1,12 @@
 name: CI
 
+# This project's own quality gate. It holds no credentials, deploys nothing,
+# and is not gated behind an opt-in variable — it runs on every PR and every
+# push, on this repo and on every fork, with no configuration.
+#
+# Deployment is a separate concern: deploy-staging.yml / deploy-production.yml
+# are a reference implementation operators adopt for their own broker.
+
 on:
   pull_request:
     branches: [main]
@@ -9,6 +16,9 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   checks:
@@ -27,28 +37,47 @@ jobs:
       - run: pnpm run type-check
       - run: pnpm run test:run
 
-  wrangler-routes-guard:
-    name: Guard — no routes block in wrangler.jsonc.tmpl
+  config-renders:
+    name: Guard — config renders for an operator
+    # The test suite always renders wrangler.jsonc with no DOMAIN, so the
+    # routes block is empty there and the operator-shaped path is never
+    # exercised. This is the only thing that checks it, and it needs no
+    # credentials: `--dry-run` builds the bundle and resolves bindings
+    # without contacting the API.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Fail if wrangler.jsonc.tmpl contains a routes block
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Render with operator values and dry-run the deploy
+        env:
+          DOMAIN: pact-broker.example.com
+          WORKER_NAME: pact-broker-ci-check
+          CLOUDFLARE_ACCOUNT_ID: "0000000000000000000000000000cafe"
+          MUTATING_RATE_LIMIT_THRESHOLD: "30"
+          READ_RATE_LIMIT_THRESHOLD: "300"
         run: |
-          if grep -E '^\s*"routes"\s*:' wrangler.jsonc.tmpl; then
-            echo "::error file=wrangler.jsonc.tmpl::A 'routes' block was re-added."
-            echo "Custom-domain routing is owned by Terraform"
-            echo "(infra/main.tf → cloudflare_workers_custom_domain.pact_broker)."
-            echo "Remove the routes block. See the comment in wrangler.jsonc.tmpl."
-            exit 1
-          fi
-          echo "OK — no routes block."
+          pnpm run render-config
+          pnpm exec wrangler deploy --dry-run --outdir /tmp/ci-dryrun
+
+      - name: Assert the custom domain reached the config
+        run: |
+          grep -q '"custom_domain": *true' wrangler.jsonc \
+            || { echo "::error::routes block did not render a custom domain"; exit 1; }
+          grep -q 'pact-broker.example.com' wrangler.jsonc \
+            || { echo "::error::DOMAIN did not reach wrangler.jsonc"; exit 1; }
+          echo "OK — operator render is valid."
 
   infra-validate:
-    name: Terraform fmt + validate
-    # Runs on every PR, no credentials required. Catches HCL breakage.
-    # The full `terraform plan` lives in infra-plan below and is
-    # conditional on a repo-level var that only downstream forks set
-    # (the upstream can't plan without operator-specific credentials).
+    name: Terraform fmt + validate (Access module)
+    # infra/ is an optional Terraform module that CI never applies, so this is
+    # the only thing keeping it honest. Needs no credentials — a module with no
+    # provider block validates standalone.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -64,94 +93,3 @@ jobs:
       - name: Terraform validate
         run: terraform validate -no-color
         working-directory: infra
-
-  infra-plan:
-    name: Terraform Plan (staging)
-    # Only runs on forks that have configured the `staging` GitHub
-    # Environment with AWS + Cloudflare credentials. Set the repo-level
-    # variable `INFRA_DEPLOY_ENABLED=true` to opt in. On the upstream
-    # agnostic repo, this is off by design — plans need operator
-    # credentials that upstream doesn't (and shouldn't) hold.
-    if: vars.INFRA_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    environment: staging
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
-      TF_VAR_domain: ${{ vars.DOMAIN }}
-      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
-      # Cloudflare Access perimeter (opt-in, default off). Unset GH
-      # variables emit empty strings, leaving the Terraform defaults
-      # in place → no Access resources provisioned.
-      TF_VAR_access_policy_mode: ${{ vars.ACCESS_POLICY_MODE || '' }}
-      TF_VAR_access_service_token_id: ${{ vars.ACCESS_SERVICE_TOKEN_ID || '' }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.14.8"
-
-      - name: Terraform init
-        run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
-            -backend-config="key=pact-broker-workers/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
-        working-directory: infra
-
-      - name: Select workspace
-        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
-        working-directory: infra
-
-      - name: Terraform plan
-        id: plan
-        run: terraform plan -no-color -input=false
-        working-directory: infra
-        continue-on-error: true
-
-      - name: Post plan to PR
-        uses: actions/github-script@v9
-        if: github.event_name == 'pull_request'
-        env:
-          PLAN: ${{ steps.plan.outputs.stdout }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const plan = process.env.PLAN || 'No plan output captured.';
-            const truncated = plan.length > 60000
-              ? plan.substring(0, 60000) + '\n\n... (truncated, see workflow logs for full output)'
-              : plan;
-            const body = `#### Terraform Plan (staging) \`${{ steps.plan.outcome }}\`
-
-            <details><summary>Show plan</summary>
-
-            \`\`\`
-            ${truncated}
-            \`\`\`
-
-            </details>
-
-            *Triggered by @${{ github.actor }} in ${{ github.event.pull_request.html_url }}*`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
-
-      - name: Fail if plan failed
-        if: steps.plan.outcome == 'failure'
-        run: exit 1

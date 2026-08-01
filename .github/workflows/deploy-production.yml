@@ -1,5 +1,13 @@
 name: Deploy to Production
 
+# REFERENCE IMPLEMENTATION — not this project's own CI (that is ci.yml).
+# See deploy-staging.yml for the full note on the model.
+#
+# The approval gate here is the `production` GitHub Environment's
+# required-reviewer rule, NOT a Terraform plan — it always was. Configure it
+# under Settings -> Environments -> production -> Required reviewers. Without
+# that rule this deploys unattended, which defeats the point.
+
 on:
   workflow_dispatch:
 
@@ -7,10 +15,22 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  checks:
-    name: Lint, Test, and Type-check
+  # Runs unattended, before the gate, so a reviewer approves a change already
+  # proven to build. `--dry-run` needs no credentials and contacts nothing; it
+  # produces the binding list a reviewer should sanity-check.
+  preflight:
+    name: Checks and deploy preview
     runs-on: ubuntu-latest
+    if: vars.WORKER_NAME != ''
+    environment: staging # env-scoped vars only; the approval rule is on production
+    env:
+      DOMAIN: ${{ vars.DOMAIN }}
+      WORKER_NAME: ${{ vars.WORKER_NAME }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -24,108 +44,42 @@ jobs:
       - run: pnpm run type-check
       - run: pnpm run test:run
 
-  plan:
-    name: Terraform Plan (production)
-    needs: checks
-    if: vars.INFRA_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    # Bind to `production` so env-scoped vars/secrets resolve. The plan
-    # itself doesn't need the reviewer gate (it's read-only); the gate
-    # is on the `apply` job below.
-    environment: production
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
-      TF_VAR_domain: ${{ vars.DOMAIN }}
-      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
-      # Cloudflare Access perimeter (opt-in, default off). Unset GH
-      # variables emit empty strings, leaving the Terraform defaults
-      # in place → no Access resources provisioned.
-      TF_VAR_access_policy_mode: ${{ vars.ACCESS_POLICY_MODE || '' }}
-      TF_VAR_access_service_token_id: ${{ vars.ACCESS_SERVICE_TOKEN_ID || '' }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.14.8"
-
-      - name: Terraform init
+      - name: Build preview
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
-            -backend-config="key=pact-broker-workers/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
-        working-directory: infra
+          pnpm run render-config
+          pnpm exec wrangler deploy --dry-run --outdir /tmp/preview 2>&1 | tee preview.txt
 
-      - name: Select workspace
-        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
-        working-directory: infra
-
-      - name: Terraform plan
-        run: terraform plan -no-color -input=false -out=tfplan | tee plan.txt
-        working-directory: infra
-
-      - name: Render plan to workflow summary
+      - name: Render preview to workflow summary
         run: |
           {
-            echo '## Terraform plan (production)'
+            echo '## Deploy preview'
+            echo ''
+            echo 'Bindings and bundle for the commit awaiting approval:'
             echo ''
             echo '```'
-            head -c 900000 infra/plan.txt
+            head -c 900000 preview.txt
             echo ''
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload tfplan artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: tfplan-production
-          path: infra/tfplan
-          retention-days: 7
-          if-no-files-found: error
-
-  apply:
-    name: Terraform Apply (production)
-    needs: plan
-    if: vars.INFRA_DEPLOY_ENABLED == 'true'
+  deploy:
+    name: Deploy to Production
+    needs: preflight
     runs-on: ubuntu-latest
-    environment: production   # required-reviewer gate — approver reads the plan summary above
+    if: vars.WORKER_NAME != ''
+    environment: production # required-reviewer gate — approver reads the preview above
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_terraform_state_bucket: ${{ vars.TERRAFORM_STATE_BUCKET }}
-      TF_VAR_domain: ${{ vars.DOMAIN }}
-      TF_VAR_worker_name: ${{ vars.WORKER_NAME }}
-      TF_VAR_secrets_prefix: ${{ vars.SECRETS_PREFIX }}
-      # Cloudflare Access perimeter (opt-in, default off). Unset GH
-      # variables emit empty strings, leaving the Terraform defaults
-      # in place → no Access resources provisioned.
-      TF_VAR_access_policy_mode: ${{ vars.ACCESS_POLICY_MODE || '' }}
-      TF_VAR_access_service_token_id: ${{ vars.ACCESS_SERVICE_TOKEN_ID || '' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      DOMAIN: ${{ vars.DOMAIN }}
+      WORKER_NAME: ${{ vars.WORKER_NAME }}
+      ALLOW_PUBLIC_READ: ${{ vars.ALLOW_PUBLIC_READ }}
+      CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
+      PUBLIC_BADGES: ${{ vars.PUBLIC_BADGES }}
+      MUTATING_RATE_LIMIT_THRESHOLD: ${{ vars.MUTATING_RATE_LIMIT_THRESHOLD }}
+      READ_RATE_LIMIT_THRESHOLD: ${{ vars.READ_RATE_LIMIT_THRESHOLD }}
     steps:
       - uses: actions/checkout@v6
-
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
@@ -133,61 +87,44 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.14.8"
-
-      - name: Terraform init
+      - name: Verify environment is configured
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}" \
-            -backend-config="key=pact-broker-workers/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}"
-        working-directory: infra
+          missing=""
+          [ -n "$DOMAIN" ] || missing="$missing DOMAIN"
+          [ -n "$WORKER_NAME" ] || missing="$missing WORKER_NAME"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::The 'production' GitHub Environment is missing:$missing"
+            exit 1
+          fi
 
-      - name: Select workspace
-        run: terraform workspace select -or-create "${{ vars.TF_WORKSPACE }}"
-        working-directory: infra
+      - name: Deploy
+        run: pnpm run deploy
 
-      - name: Download tfplan artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: tfplan-production
-          path: infra
-
-      - name: Terraform apply
-        run: terraform apply -input=false tfplan
-        working-directory: infra
-
-      - name: Health check
-        env:
-          DOMAIN: ${{ vars.DOMAIN }}
+      - name: Smoke test
+        # Tokenless — see deploy-staging.yml for why.
         run: |
+          set -euo pipefail
+
           for i in 1 2 3 4 5; do
-            if curl -sf "https://${DOMAIN}/health"; then
-              echo " Health check passed"
-              exit 0
+            if body=$(curl -fsS --max-time 10 "https://${DOMAIN}/health"); then
+              echo "$body" | jq -e '.status == "ok" and .storage == "ok"' > /dev/null
+              echo "Health check passed: ${body}"
+              break
+            fi
+            if [ "$i" = "5" ]; then
+              echo "::error::Health check failed after 5 attempts"
+              exit 1
             fi
             echo "Attempt $i failed, retrying in 5s..."
             sleep 5
           done
-          echo "Health check failed after 5 attempts"
-          exit 1
 
-      - name: Authenticated smoke test
-        env:
-          DOMAIN: ${{ vars.DOMAIN }}
-          BROKER_TOKEN: ${{ secrets.SMOKE_TEST_BROKER_TOKEN }}
-        run: |
-          if [ -z "$BROKER_TOKEN" ]; then
-            echo "SMOKE_TEST_BROKER_TOKEN not set — skipping authenticated smoke test."
-            exit 0
-          fi
-          status=$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer $BROKER_TOKEN" \
-            "https://${DOMAIN}/pacticipants")
-          if [ "$status" != "200" ]; then
-            echo "Authenticated smoke test failed — got HTTP $status for GET /pacticipants"
+          status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            "https://${DOMAIN}/pacticipants" || true)
+          if [ "$status" != "401" ]; then
+            echo "::error::Expected 401 from unauthenticated GET /pacticipants, got ${status}."
             exit 1
           fi
-          echo "Authenticated smoke test passed (HTTP 200)"
+          echo "Auth check passed: unauthenticated /pacticipants returned 401"
