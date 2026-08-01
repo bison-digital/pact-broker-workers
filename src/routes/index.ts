@@ -4,6 +4,12 @@ import { HalBuilder, getBaseUrl } from "../services/hal";
 
 const app = new Hono<{ Bindings: Env }>();
 
+// Helper to get DO stub
+function getBroker(env: Env) {
+  const id = env.PACT_BROKER.idFromName("pact-broker");
+  return env.PACT_BROKER.get(id);
+}
+
 /**
  * Pact-Broker-API compatibility version reported by the index/root
  * endpoint. The Ruby reference implementation uses this field as the
@@ -35,9 +41,35 @@ app.get("/", (c) => {
   return c.json(response);
 });
 
-// Health check
-app.get("/health", (c) => {
-  return c.json({ status: "ok" });
+/**
+ * Health check — public, no auth.
+ *
+ * This probes the Durable Object rather than returning a static literal,
+ * because it is the only post-deploy signal CI has. Nothing in the deploy
+ * pipeline holds a bearer token, so an authenticated smoke test is not
+ * available; a static 200 would only prove the Worker booted, not that the
+ * DO binding resolves or that its SQLite storage is readable.
+ *
+ * The trade-off is that an unauthenticated caller can wake and query the DO.
+ * The probe is O(1) (see PactBrokerDO.healthCheck) and the edge rate-limit
+ * ruleset in infra/main.tf covers the read path.
+ */
+app.get("/health", async (c) => {
+  try {
+    await getBroker(c.env).healthCheck();
+    return c.json({ status: "ok", storage: "ok" });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "error",
+        msg: "health check failed",
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    // Non-2xx so `curl -f` in the deploy smoke test fails the job.
+    return c.json({ status: "error", storage: "error" }, 503);
+  }
 });
 
 export { app as indexRoutes };

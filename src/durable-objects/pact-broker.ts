@@ -49,6 +49,27 @@ export class PactBrokerDO extends DurableObject<Env> {
     });
   }
 
+  // ============ Health ============
+
+  /**
+   * Cheap liveness probe for `GET /health`.
+   *
+   * Reaching this method at all proves the DO woke and its constructor
+   * finished, which means `runMigrations` completed inside
+   * `blockConcurrencyWhile`. The query then proves the schema is actually
+   * there and SQLite is readable — `LIMIT 1` on an indexed table is O(1)
+   * regardless of how much data the broker holds.
+   *
+   * Deliberately NOT `getAllPacticipants()`: that is unbounded and would
+   * make an unauthenticated public endpoint expensive on a busy broker.
+   *
+   * Throws if storage is unreachable; the caller turns that into a 503.
+   */
+  async healthCheck(): Promise<boolean> {
+    this.ctx.storage.sql.exec("SELECT 1 FROM pacticipants LIMIT 1").toArray();
+    return true;
+  }
+
   // ============ Pacticipant Operations ============
 
   async getOrCreatePacticipant(name: string): Promise<Pacticipant> {
