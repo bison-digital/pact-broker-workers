@@ -1,7 +1,17 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "rules": {
-    "unicorn/no-array-sort": "off"
+    "unicorn/no-array-sort": "off",
+    // `_links` and `_embedded` are mandated by the HAL specification and are
+    // part of this broker's wire contract with pact-broker-client — they
+    // cannot be renamed. `_result` in middleware/auth.ts is a deliberately
+    // discarded accumulator that exists only to burn constant time in the
+    // length-mismatch branch of timingSafeEqual; the underscore marks it as
+    // intentionally thrown away.
+    //
+    // Allow-listed rather than disabled so the rule still catches accidental
+    // dangling underscores elsewhere.
+    "no-underscore-dangle": ["warn", { "allow": ["_links", "_embedded", "_result"] }]
   },
   "categories": {
     "correctness": "error",
