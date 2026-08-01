@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
-import { eq, and, desc, isNull } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull } from "drizzle-orm";
 import {
   pacticipants,
   versions,
@@ -530,6 +530,31 @@ export class PactBrokerDO extends DurableObject<Env> {
 
       if (!consumer || !provider) continue;
 
+      /**
+       * ⚠️ **A verification applies to the pact CONTENT, not to one consumer version's row.**
+       *
+       * Every publish inserts a new `pacts` row, even when the consumer republishes a byte-identical
+       * contract under a new version — which is the normal case, since CI publishes on every commit.
+       * Those rows share a `content_sha`, and that is precisely what the column is for.
+       *
+       * Matching verifications on `pact.id` alone therefore looked them up against *this* version's
+       * row, while `publishVerification` had attached them to whichever row `getPactByContentSha`
+       * happened to return for the same sha. The two diverge the moment a consumer commits again, and
+       * `can-i-deploy` then answers "1 pact(s) have not been verified" **forever** — for a contract
+       * the provider has verified, with no way for the consumer to make it green short of asking the
+       * provider to re-run against every new commit.
+       *
+       * Scoping by `content_sha` is also what makes the answer *correct* rather than merely green: an
+       * unchanged contract genuinely is still verified, and a changed one gets a new sha and no
+       * inherited result.
+       */
+      const sameContent = this.db
+        .select({ id: pacts.id })
+        .from(pacts)
+        .where(eq(pacts.contentSha, pact.contentSha))
+        .all()
+        .map((row) => row.id);
+
       // Get latest verification for target tag if specified
       let verification: Verification | undefined;
       if (toTag) {
@@ -540,7 +565,7 @@ export class PactBrokerDO extends DurableObject<Env> {
             .from(verifications)
             .where(
               and(
-                eq(verifications.pactId, pact.id),
+                inArray(verifications.pactId, sameContent),
                 eq(verifications.providerVersionId, providerVersion.id),
               ),
             )
@@ -551,7 +576,7 @@ export class PactBrokerDO extends DurableObject<Env> {
         verification = this.db
           .select()
           .from(verifications)
-          .where(eq(verifications.pactId, pact.id))
+          .where(inArray(verifications.pactId, sameContent))
           .orderBy(desc(verifications.verifiedAt))
           .get();
       }

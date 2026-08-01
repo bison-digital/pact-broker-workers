@@ -78,3 +78,51 @@ describe("/can-i-deploy", () => {
     expect((body as { summary: { deployable: boolean } }).summary.deployable).toBe(true);
   });
 });
+
+/**
+ * ⚠️ **The defect that made `can-i-deploy` unusable in practice.**
+ *
+ * CI publishes a pact on every commit, so a consumer republishes a byte-identical contract under a new
+ * version constantly — and every publish inserts a new `pacts` row. Those rows share a `content_sha`,
+ * which is exactly what that column is for.
+ *
+ * Verifications were matched on `pact.id` alone, so the matrix looked them up against *this* version's
+ * row while `publishVerification` had attached them to whichever row shared the sha. The two diverge
+ * the moment the consumer commits again, and `can-i-deploy` then answers "1 pact(s) have not been
+ * verified" **forever** — for a contract the provider has verified, with nothing the consumer can do
+ * short of asking the provider to re-run against every new commit.
+ *
+ * Found by driving the real loop from company-manager: publish → verify → ask, where the ask was a
+ * second consumer version of an unchanged contract.
+ */
+describe("a verification follows the pact CONTENT, not one consumer version", () => {
+  beforeAll(async () => {
+    // Version 1: publish and verify.
+    const { body } = await publishPact("sha-c1", "sha-p1", "1.0.0");
+    const sha = (body as { contentSha: string }).contentSha;
+    await publishVerification("sha-p1", "sha-c1", sha, true, "p-1.0.0");
+    // Version 2: the SAME contract, republished under a new consumer version — an ordinary CI commit.
+    const { body: second } = await publishPact("sha-c1", "sha-p1", "2.0.0");
+    expect((second as { contentSha: string }).contentSha).toBe(sha);
+  });
+
+  it("reports the NEW consumer version as verified when the contract is unchanged", async () => {
+    const { status, body } = await reqJson("/can-i-deploy?pacticipant=sha-c1&version=2.0.0", {
+      headers: authHeaders(),
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      summary: { deployable: true, reason: "All pacts verified successfully" },
+    });
+  });
+
+  it("still reports a CHANGED contract as unverified", async () => {
+    // The counterweight, and the reason this is scoped by sha rather than simply relaxed: a contract
+    // that actually changed gets a new sha, inherits no result, and must be verified again.
+    await publishPact("sha-c1", "sha-p1", "3.0.0", { description: "a different interaction" });
+    const { body } = await reqJson("/can-i-deploy?pacticipant=sha-c1&version=3.0.0", {
+      headers: authHeaders(),
+    });
+    expect((body as { summary: { deployable: boolean } }).summary.deployable).toBe(false);
+  });
+});
