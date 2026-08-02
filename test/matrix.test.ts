@@ -251,6 +251,30 @@ describe("/can-i-deploy narrowed to a target", () => {
     expect(status).toBe(200);
   });
 
+  // `prod` is routinely both a tag and an environment, and they can point at
+  // different versions. A recorded deployment is the stronger statement about
+  // what is actually running, so it wins.
+  it("prefers the deployed version when a target names both an environment and a tag", async () => {
+    const { body } = await publishPact("prec-c", "prec-p", "1.0.0");
+    const sha = (body as { contentSha: string }).contentSha;
+
+    await publishVerification("prec-p", "prec-c", sha, true, "v-tagged");
+    await tagVersion("prec-p", "v-tagged", "prec-shared");
+
+    await publishVerification("prec-p", "prec-c", sha, false, "v-deployed");
+    await ensureEnvironment("prec-shared");
+    await recordDeployment("prec-p", "v-deployed", "prec-shared");
+
+    const { body: result } = await reqJson(
+      "/can-i-deploy?pacticipant=prec-c&version=1.0.0&to=prec-shared",
+      { headers: authHeaders() },
+    );
+    const summary = (result as { summary: { failed: number; success: number } }).summary;
+
+    expect(summary.failed).toBe(1);
+    expect(summary.success).toBe(0);
+  });
+
   it("resolves a target that names an environment the provider is deployed to", async () => {
     await ensureEnvironment("tgt-staging");
     await recordDeployment("tgt-p", "p-9.0.0", "tgt-staging");

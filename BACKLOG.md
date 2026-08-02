@@ -13,6 +13,26 @@ Implemented. A dependency-free HTML page at `/ui` that prompts for the bearer to
 ### Matrix badge endpoint (shipped)
 Implemented. `GET /pacts/provider/{p}/consumer/{c}/badge` returns an SVG pill. Public by default (set `PUBLIC_BADGES=false` to require auth).
 
+### Reference-broker parity — known remaining gaps
+
+The 3.0.0 work aligned `/matrix` and `/can-i-deploy` with the reference broker's
+response contract. These are the parts still not aligned. Listed so nobody reads
+"parity" as "complete".
+
+- **Multi-selector matrix queries.** We read one `q[][pacticipant]` selector;
+  the reference accepts many, with `latestby=cvpv`. `pact-broker can-i-deploy`
+  sends multiple selectors when given more than one `--pacticipant`.
+- **`success=`, `ignore=`, `limit=`.** Accepted and ignored (never a 400), so a
+  client sending them still gets an answer — just an unfiltered one. Consequently
+  `summary.ignored` is never emitted, which the client reads as "this broker
+  doesn't support ignore" (`matrix/resource.rb#supports_ignore?`) — correct.
+- **`mainBranch=true`.** Not honoured on the matrix query. `--with-main-branches`
+  therefore returns an unnarrowed result.
+- **`branchVersions` / `environments` arrays on matrix versions.** Omitted rather
+  than emitted empty; we have no model behind them.
+- **`pb:branches` collection and per-branch `latest-version` resources.** Only
+  the `pb:branch-version` resource exists, which is what verifiers need.
+
 ## Hardening / hygiene
 
 Items found during a periodic audit of the upstream repo. Not blockers; filed so they don't get forgotten.
