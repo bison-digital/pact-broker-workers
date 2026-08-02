@@ -122,6 +122,31 @@ Verified end to end against `pactfoundation/pact-cli`: `publish --branch
 --build-url --tag`, `create-environment`, `record-deployment`, and
 `can-i-deploy --to-environment`.
 
+### Fixed — consumer version selectors, and non-deterministic "latest"
+
+Both surfaced when CI went red on the merge: the second bug had been masking
+the first.
+
+- **"Latest version" was undefined for same-second writes.** `versions.created_at`
+  defaults to `datetime('now')` — second granularity — and nothing broke the
+  tie, so two versions published in the same second returned in arbitrary order.
+  Same for `verifications.verified_at` (a re-run flipping red to green could
+  report the stale result) and `deployed_versions.deployed_at` (which decides
+  what a can-i-deploy target resolves to). All three now tie-break on the
+  monotonic row id.
+
+- **Consumer version selectors filtered the latest pact instead of selecting.**
+  `getPactsForVerification` started from "latest pact per consumer" and filtered
+  it down, so `{tag: "prod"}` meant "the newest version, if it happens to be
+  tagged prod" rather than "the newest version tagged prod". A consumer whose
+  production version was not its newest could never be selected — **the provider
+  silently skipped verifying the pact production was actually running.** Each
+  constrained selector now picks from every version of every consumer and then
+  takes the newest match; `latest` selectors are unchanged.
+
+  This was invisible while "latest" was non-deterministic, because the tie
+  happened to fall the right way on a developer machine.
+
 ### Notes
 
 Deliberate remaining gaps are listed in `BACKLOG.md` under "Reference-broker

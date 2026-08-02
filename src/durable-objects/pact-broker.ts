@@ -221,7 +221,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .select()
       .from(versions)
       .where(eq(versions.pacticipantId, pacticipant.id))
-      .orderBy(desc(versions.createdAt))
+      .orderBy(desc(versions.createdAt), desc(versions.id))
       .all();
   }
 
@@ -266,7 +266,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .from(versions)
       .innerJoin(tags, eq(tags.versionId, versions.id))
       .where(and(eq(versions.pacticipantId, pacticipant.id), eq(tags.name, tagName)))
-      .orderBy(desc(versions.createdAt))
+      .orderBy(desc(versions.createdAt), desc(versions.id))
       .get();
 
     return result?.version;
@@ -385,7 +385,7 @@ export class PactBrokerDO extends DurableObject<Env> {
         .from(versions)
         .innerJoin(pacts, eq(pacts.consumerVersionId, versions.id))
         .where(and(eq(versions.pacticipantId, consumer.id), eq(pacts.providerId, provider.id)))
-        .orderBy(desc(versions.createdAt))
+        .orderBy(desc(versions.createdAt), desc(versions.id))
         .get();
 
       version = result?.version;
@@ -444,6 +444,35 @@ export class PactBrokerDO extends DurableObject<Env> {
     }
 
     return results;
+  }
+
+  /**
+   * Every pact this provider has, across all consumer versions, newest first.
+   *
+   * The candidate set a consumer version selector picks from — unlike
+   * getLatestPactsForProvider, which is only correct for `latest` selectors.
+   */
+  async getAllPactsForProvider(providerName: string): Promise<
+    Array<{
+      pact: Pact;
+      consumer: Pacticipant;
+      provider: Pacticipant;
+      version: Version;
+    }>
+  > {
+    const provider = await this.getPacticipant(providerName);
+    if (!provider) return [];
+
+    const rows = this.db
+      .select({ pact: pacts, version: versions, consumer: pacticipants })
+      .from(pacts)
+      .innerJoin(versions, eq(pacts.consumerVersionId, versions.id))
+      .innerJoin(pacticipants, eq(versions.pacticipantId, pacticipants.id))
+      .where(eq(pacts.providerId, provider.id))
+      .orderBy(desc(versions.createdAt), desc(versions.id))
+      .all();
+
+    return rows.map((r) => ({ pact: r.pact, consumer: r.consumer, provider, version: r.version }));
   }
 
   async getPactByContentSha(sha: string): Promise<Pact | undefined> {
@@ -519,7 +548,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .select()
       .from(verifications)
       .where(eq(verifications.pactId, pactId))
-      .orderBy(desc(verifications.verifiedAt))
+      .orderBy(desc(verifications.verifiedAt), desc(verifications.id))
       .all();
   }
 
@@ -598,7 +627,7 @@ export class PactBrokerDO extends DurableObject<Env> {
             isNull(deployedVersions.undeployedAt),
           ),
         )
-        .orderBy(desc(deployedVersions.deployedAt))
+        .orderBy(desc(deployedVersions.deployedAt), desc(deployedVersions.id))
         .get();
 
       if (deployed) return { version: deployed.version, type: "environment" };
@@ -611,7 +640,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .select()
       .from(versions)
       .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.branch, target)))
-      .orderBy(desc(versions.createdAt))
+      .orderBy(desc(versions.createdAt), desc(versions.id))
       .get();
 
     if (branched) return { version: branched, type: "branch" };
@@ -695,7 +724,7 @@ export class PactBrokerDO extends DurableObject<Env> {
                 eq(verifications.providerVersionId, resolved.version.id),
               ),
             )
-            .orderBy(desc(verifications.verifiedAt))
+            .orderBy(desc(verifications.verifiedAt), desc(verifications.id))
             .get();
         }
       } else {
@@ -703,7 +732,7 @@ export class PactBrokerDO extends DurableObject<Env> {
           .select()
           .from(verifications)
           .where(eq(verifications.pactId, pact.id))
-          .orderBy(desc(verifications.verifiedAt))
+          .orderBy(desc(verifications.verifiedAt), desc(verifications.id))
           .get();
       }
 
@@ -965,17 +994,30 @@ export class PactBrokerDO extends DurableObject<Env> {
       }
     > = new Map();
 
-    for (const selector of selectors) {
-      let selectorResults = results;
-      const notices: string[] = [];
+    // Every consumer version that has a pact with this provider, newest first.
+    // A selector picks from all of them; it does not narrow the latest one.
+    // Filtering the latest pact would mean a consumer whose production version
+    // is not its newest could never be selected — the provider would silently
+    // skip verifying the pact production is actually running.
+    const allCandidates = await this.getAllPactsForProvider(providerName);
 
-      // Filter by consumer
+    for (const selector of selectors) {
+      const notices: string[] = [];
+      const constrained =
+        Boolean(selector.tag) ||
+        Boolean(selector.branch) ||
+        Boolean(selector.mainBranch) ||
+        Boolean(selector.deployed);
+
+      // An unconstrained selector (`latest: true`, or nothing at all) means the
+      // newest version per consumer; anything else selects from every version.
+      let selectorResults = constrained ? allCandidates : results;
+
       if (selector.consumer) {
         selectorResults = selectorResults.filter((r) => r.consumer.name === selector.consumer);
         notices.push(`consumer is ${selector.consumer}`);
       }
 
-      // Filter by tag
       if (selector.tag) {
         const filteredByTag: typeof selectorResults = [];
         for (const r of selectorResults) {
@@ -988,13 +1030,11 @@ export class PactBrokerDO extends DurableObject<Env> {
         notices.push(`version tagged with '${selector.tag}'`);
       }
 
-      // Filter by branch
       if (selector.branch) {
         selectorResults = selectorResults.filter((r) => r.version.branch === selector.branch);
         notices.push(`version is on branch '${selector.branch}'`);
       }
 
-      // Filter by mainBranch
       if (selector.mainBranch) {
         const filteredByMainBranch: typeof selectorResults = [];
         for (const r of selectorResults) {
@@ -1007,7 +1047,6 @@ export class PactBrokerDO extends DurableObject<Env> {
         notices.push("version is on the main branch");
       }
 
-      // Filter by deployed
       if (selector.deployed) {
         const filteredByDeployed: typeof selectorResults = [];
         for (const r of selectorResults) {
@@ -1028,7 +1067,16 @@ export class PactBrokerDO extends DurableObject<Env> {
         );
       }
 
-      // Latest selector just uses current results
+      // A constrained selector still means "the latest one that matches", so
+      // keep only the newest surviving version per consumer.
+      if (constrained) {
+        const newestPerConsumer = new Map<string, (typeof selectorResults)[number]>();
+        for (const r of selectorResults) {
+          if (!newestPerConsumer.has(r.consumer.name)) newestPerConsumer.set(r.consumer.name, r);
+        }
+        selectorResults = Array.from(newestPerConsumer.values());
+      }
+
       if (selector.latest) {
         notices.push("it is the latest pact");
       }
