@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env, MatrixResponse, CanIDeployResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
 import { summarizeMatrix, toSummaryRows } from "../services/matrix-summary";
+import { decorateMatrixRow } from "../services/matrix-row";
 import {
   nameSchema,
   versionSchema,
@@ -56,7 +57,7 @@ app.get("/matrix", async (c) => {
   const response: MatrixResponse = {
     summary,
     notices,
-    matrix,
+    matrix: matrix.map((row) => decorateMatrixRow(hal, row)),
     _links: hal.matrix(),
   };
 
@@ -100,7 +101,7 @@ app.get("/can-i-deploy", async (c) => {
   const response: CanIDeployResponse = {
     summary: result.summary,
     notices: result.notices,
-    matrix: result.matrix,
+    matrix: result.matrix.map((row) => decorateMatrixRow(hal, row)),
     _links: hal.canIDeploy(),
   };
 

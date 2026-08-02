@@ -47,15 +47,15 @@ function describeSelector(selector: { name: string; version: string | null }): s
  */
 export function toSummaryRows(
   rows: Array<{
-    consumer: { name: string; version: string };
-    provider: { name: string; version: string | null };
-    verificationResult?: { success: boolean } | null;
+    consumer: { name: string; version: { number: string } };
+    provider: { name: string; version: { number: string } | null };
+    verification?: { success: boolean } | null;
   }>,
 ): SummaryRow[] {
   return rows.map((row) => ({
-    consumer: row.consumer,
-    provider: row.provider,
-    success: row.verificationResult ? row.verificationResult.success : null,
+    consumer: { name: row.consumer.name, version: row.consumer.version.number },
+    provider: { name: row.provider.name, version: row.provider.version?.number ?? null },
+    success: row.verification ? row.verification.success : null,
   }));
 }
 

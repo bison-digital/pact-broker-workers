@@ -31,7 +31,8 @@ import {
 import type {
   Env,
   PactContent,
-  MatrixRow,
+  MatrixRowData,
+  MatrixVersionData,
   ConsumerVersionSelector,
   WebhookEvent,
   WebhookEventPayload,
@@ -502,7 +503,22 @@ export class PactBrokerDO extends DurableObject<Env> {
 
   // ============ Matrix / Can-I-Deploy Operations ============
 
-  async getMatrix(pacticipantName: string, version?: string, toTag?: string): Promise<MatrixRow[]> {
+  /** Version as a matrix row describes it: number, branch and tag names. */
+  private versionSummary(version: Version): MatrixVersionData {
+    const versionTags = this.db.select().from(tags).where(eq(tags.versionId, version.id)).all();
+
+    return {
+      number: version.number,
+      branch: version.branch,
+      tags: versionTags.map((t) => t.name),
+    };
+  }
+
+  async getMatrix(
+    pacticipantName: string,
+    version?: string,
+    toTag?: string,
+  ): Promise<MatrixRowData[]> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return [];
 
@@ -517,7 +533,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .where(eq(versions.pacticipantId, pacticipant.id))
       .all();
 
-    const rows: MatrixRow[] = [];
+    const rows: MatrixRowData[] = [];
 
     // Process consumer pacts
     for (const { pact, consumerVersion } of consumerPacts) {
@@ -562,12 +578,26 @@ export class PactBrokerDO extends DurableObject<Env> {
           .get();
       }
 
+      // The provider version reported is the one that produced the
+      // verification — until something verifies the pact there isn't one.
+      const providerVersion = verification
+        ? this.db
+            .select()
+            .from(versions)
+            .where(eq(versions.id, verification.providerVersionId))
+            .get()
+        : undefined;
+
       rows.push({
-        consumer: { name: consumer.name, version: consumerVersion.number },
-        provider: { name: provider.name, version: null },
-        pactVersion: { sha: pact.contentSha },
-        verificationResult: verification
+        consumer: { name: consumer.name, version: this.versionSummary(consumerVersion) },
+        provider: {
+          name: provider.name,
+          version: providerVersion ? this.versionSummary(providerVersion) : null,
+        },
+        pact: { sha: pact.contentSha, createdAt: pact.createdAt },
+        verification: verification
           ? {
+              id: verification.id,
               success: verification.success,
               verifiedAt: verification.verifiedAt,
             }
@@ -582,7 +612,7 @@ export class PactBrokerDO extends DurableObject<Env> {
     pacticipantName: string,
     version: string,
     toTag?: string,
-  ): Promise<{ summary: MatrixSummary; notices: MatrixNotice[]; matrix: MatrixRow[] }> {
+  ): Promise<{ summary: MatrixSummary; notices: MatrixNotice[]; matrix: MatrixRowData[] }> {
     const matrix = await this.getMatrix(pacticipantName, version, toTag);
     return { ...summarizeMatrix(toSummaryRows(matrix)), matrix };
   }

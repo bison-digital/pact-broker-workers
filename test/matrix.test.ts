@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { reqJson, authHeaders, publishPact, publishVerification, tagVersion } from "./helpers";
+import { req, reqJson, authHeaders, publishPact, publishVerification, tagVersion } from "./helpers";
+
+/** The subset of a matrix row these tests assert on — see matrix_decorator.rb. */
+interface MatrixRowShape {
+  consumer: { name: string; version: { number: string; tags: Array<{ name: string }> } };
+  provider: { name: string; version: { number: string } | null };
+  pact: { createdAt: string; _links: { self: { href: string } } };
+  verificationResult: { success: boolean; _links: { self: { href: string } } } | null;
+}
 
 describe("/matrix", () => {
   beforeAll(async () => {
@@ -42,6 +50,63 @@ describe("/matrix", () => {
     });
     expect(status).toBe(200);
     expect((body as { summary: { deployable: boolean | null } }).summary.deployable).toBeNull();
+  });
+
+  // Row shape follows matrix_decorator.rb. pact_broker-client's TextFormatter
+  // reads row[:consumer][:version][:number]; a bare string there raises
+  // TypeError in Ruby rather than degrading, so the object form is load-bearing.
+  it("reports the consumer version as an object, not a bare string", async () => {
+    const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
+      headers: authHeaders(),
+    });
+    const row = (body as { matrix: MatrixRowShape[] }).matrix[0]!;
+
+    expect(row.consumer.version.number).toBe("1.0.0");
+    expect(row.consumer.version.tags).toEqual([{ name: "prod" }]);
+  });
+
+  it("reports the provider version that produced the verification", async () => {
+    const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
+      headers: authHeaders(),
+    });
+    const row = (body as { matrix: MatrixRowShape[] }).matrix[0]!;
+
+    expect(row.provider.version?.number).toBe("p-1.0.0");
+  });
+
+  it("leaves the provider version null when nothing verified the pact", async () => {
+    const { body } = await reqJson("/matrix?pacticipant=mx-c2&version=1.0.0", {
+      headers: authHeaders(),
+    });
+    const row = (body as { matrix: MatrixRowShape[] }).matrix[0]!;
+
+    expect(row.provider.version).toBeNull();
+    expect(row.verificationResult).toBeNull();
+  });
+
+  it("links each verification result to a resource that resolves", async () => {
+    const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
+      headers: authHeaders(),
+    });
+    const row = (body as { matrix: MatrixRowShape[] }).matrix[0]!;
+    const href = row.verificationResult?._links.self.href;
+
+    expect(href).toBeDefined();
+    const followed = await req(new URL(href!).pathname, { headers: authHeaders() });
+    expect(followed.status).toBe(200);
+  });
+
+  it("reports the pact under `pact` with its creation time", async () => {
+    const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
+      headers: authHeaders(),
+    });
+    const row = (body as { matrix: MatrixRowShape[] }).matrix[0]!;
+
+    expect(typeof row.pact.createdAt).toBe("string");
+    const followed = await req(new URL(row.pact._links.self.href).pathname, {
+      headers: authHeaders(),
+    });
+    expect(followed.status).toBe(200);
   });
 
   it("response shape includes summary, matrix, _links", async () => {
