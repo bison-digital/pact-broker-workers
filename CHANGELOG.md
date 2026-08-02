@@ -57,12 +57,20 @@ Publishing, verification and `for-verification` are untouched.
 
 ### Changed
 
-- **BREAKING — matrix row shape.** `pact_broker-client`'s `TextFormatter` reads
-  `row[:consumer][:version][:number]`. We emitted `version` as a bare string,
-  and indexing a Ruby String with a Symbol raises `TypeError`; `lookup()`
-  rescues `NoMethodError` only, so `pact-broker can-i-deploy` raised rather than
-  degrading. The README's claim that `pact-broker-client` works against this
-  broker was false for that command.
+- **BREAKING — matrix row shape.** `pact_broker-client`'s `TextFormatter`
+  navigates `row[:consumer][:version][:number]`. We emitted `version` as a bare
+  string, so `pact-broker can-i-deploy` died before printing anything:
+
+  ```
+  Error retrieving matrix. TypeError - String does not have #dig method
+    pact_broker-client-1.77.0/lib/pact_broker/client/matrix/text_formatter.rb:95
+    in 'PactBroker::Client::Matrix::TextFormatter.sortable_attributes'
+  ```
+
+  Reproduced against this broker at 2.0.0 with `pactfoundation/pact-cli`, and
+  confirmed fixed at 3.0.0 — the CLI now renders its table, the verification
+  results section, and both reasons. The README's claim that
+  `pact-broker-client` works against this broker was false for that command.
 
   Rows now follow `matrix_decorator.rb`: `consumer`/`provider` `version` is an
   object (`number`, `branch`, `tags`, `_links`), `pactVersion: {sha}` becomes
