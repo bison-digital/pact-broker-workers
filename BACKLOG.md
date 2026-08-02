@@ -19,6 +19,26 @@ The 3.0.0 work aligned `/matrix` and `/can-i-deploy` with the reference broker's
 response contract. These are the parts still not aligned. Listed so nobody reads
 "parity" as "complete".
 
+Two of these were found by running `pactfoundation/pact-cli` against `wrangler dev`, which is the
+only way to catch them — both fail *quietly enough to look like success* from our side.
+
+- **`pact-broker record-deployment` does not work.** It fails with `Could not find relation
+  'pb:pacticipant-version' in resource at <broker>`. The reference index advertises
+  `pb:pacticipant-version` (templated `/pacticipants/{pacticipant}/versions/{version}`); the client
+  expands it, GETs the version resource, and expects a **collection** of `pb:record-deployment`
+  links there, one per environment, each `name`d after its environment
+  (`record_release.rb#get_record_action_relation`). It then POSTs to the matching one. We have none
+  of that — our deployments are `PUT /pacticipants/{n}/versions/{v}/deployed/{env}`, which no client
+  knows to call. Fixing it means: the index relation, the per-environment link collection on the
+  version resource, and a POST endpoint.
+- **`pact-broker publish --branch` silently records no branch.** The publish succeeds, prints no
+  warning, and the version lands with `branch: null`. The client GETs
+  `/pacticipants/{n}/versions/{v}` and then gives up quietly; the legacy path wants a `PUT` there
+  carrying `{branch, buildUrl}` (`publish_pacts_the_old_way.rb#version_body`), and the modern path
+  wants `POST /contracts/publish` off a `pb:publish-contracts` index relation. We have neither, so
+  the branch is dropped. Note this is a *different* mechanism from the `pb:branch-version` resource
+  the Rust verifier uses, which does work — consumer-side branches via the Ruby CLI and
+  provider-side branches via pact-js take different routes through the API.
 - **Multi-selector matrix queries.** We read one `q[][pacticipant]` selector;
   the reference accepts many, with `latestby=cvpv`. `pact-broker can-i-deploy`
   sends multiple selectors when given more than one `--pacticipant`.
