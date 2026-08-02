@@ -22,10 +22,18 @@ import {
   type WebhookExecution,
 } from "../db/schema";
 import { runMigrations } from "../db/migrations";
+import {
+  summarizeMatrix,
+  toSummaryRows,
+  type MatrixSummary,
+  type MatrixNotice,
+} from "../services/matrix-summary";
 import type {
   Env,
   PactContent,
-  MatrixRow,
+  MatrixRowData,
+  MatrixVersionData,
+  MatrixTarget,
   ConsumerVersionSelector,
   WebhookEvent,
   WebhookEventPayload,
@@ -117,6 +125,18 @@ export class PactBrokerDO extends DurableObject<Env> {
       .get();
 
     if (existing) {
+      // Backfill only. A publish that mentions a branch or build URL fills in
+      // what we don't know yet, but never overwrites what is already recorded —
+      // that is what the pb:branch-version resource is for.
+      const backfill: Partial<Version> = {};
+      if (branch && !existing.branch) backfill.branch = branch;
+      if (buildUrl && !existing.buildUrl) backfill.buildUrl = buildUrl;
+
+      if (Object.keys(backfill).length > 0) {
+        this.db.update(versions).set(backfill).where(eq(versions.id, existing.id)).run();
+        return { pacticipant, version: { ...existing, ...backfill } };
+      }
+
       return { pacticipant, version: existing };
     }
 
@@ -132,6 +152,54 @@ export class PactBrokerDO extends DurableObject<Env> {
       .get();
 
     return { pacticipant, version };
+  }
+
+  /**
+   * Create or update a version's branch — the resource behind pb:branch-version.
+   *
+   * Unlike getOrCreateVersion this overwrites an existing branch: a verifier
+   * PUTting here is making an explicit statement about the version, where a
+   * pact publish only mentions its branch in passing.
+   */
+  async recordVersionBranch(
+    pacticipantName: string,
+    versionNumber: string,
+    branch: string,
+  ): Promise<Version> {
+    const pacticipant = await this.getOrCreatePacticipant(pacticipantName);
+
+    const existing = this.db
+      .select()
+      .from(versions)
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.number, versionNumber)))
+      .get();
+
+    if (existing) {
+      if (existing.branch === branch) return existing;
+
+      this.db.update(versions).set({ branch }).where(eq(versions.id, existing.id)).run();
+      return { ...existing, branch };
+    }
+
+    return this.db
+      .insert(versions)
+      .values({ pacticipantId: pacticipant.id, number: versionNumber, branch })
+      .returning()
+      .get();
+  }
+
+  /** Explicitly set a version's build URL — the contracts/publish path states it. */
+  async recordVersionBuildUrl(
+    pacticipantName: string,
+    versionNumber: string,
+    buildUrl: string,
+  ): Promise<Version | undefined> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return undefined;
+    if (version.buildUrl === buildUrl) return version;
+
+    this.db.update(versions).set({ buildUrl }).where(eq(versions.id, version.id)).run();
+    return { ...version, buildUrl };
   }
 
   async getVersion(pacticipantName: string, versionNumber: string): Promise<Version | undefined> {
@@ -496,7 +564,79 @@ export class PactBrokerDO extends DurableObject<Env> {
 
   // ============ Matrix / Can-I-Deploy Operations ============
 
-  async getMatrix(pacticipantName: string, version?: string, toTag?: string): Promise<MatrixRow[]> {
+  /**
+   * Resolve a `to` target to a provider version.
+   *
+   * A target is a bare name — clients say `--to main` without saying what kind
+   * of thing `main` is — so try each in turn. Environment first, because a
+   * recorded deployment is the strongest statement about what is running;
+   * then tag, which is what the reference `--to` means and what this broker
+   * has always resolved; then branch.
+   */
+  async resolveProviderVersionForTarget(
+    providerName: string,
+    target: string,
+  ): Promise<{ version: Version; type: MatrixTarget["type"] } | null> {
+    const pacticipant = await this.getPacticipant(providerName);
+    if (!pacticipant) return null;
+
+    const environment = this.db
+      .select()
+      .from(environments)
+      .where(eq(environments.name, target))
+      .get();
+
+    if (environment) {
+      const deployed = this.db
+        .select({ version: versions })
+        .from(deployedVersions)
+        .innerJoin(versions, eq(deployedVersions.versionId, versions.id))
+        .where(
+          and(
+            eq(deployedVersions.environmentId, environment.id),
+            eq(versions.pacticipantId, pacticipant.id),
+            isNull(deployedVersions.undeployedAt),
+          ),
+        )
+        .orderBy(desc(deployedVersions.deployedAt))
+        .get();
+
+      if (deployed) return { version: deployed.version, type: "environment" };
+    }
+
+    const tagged = await this.getLatestVersionByTag(providerName, target);
+    if (tagged) return { version: tagged, type: "tag" };
+
+    const branched = this.db
+      .select()
+      .from(versions)
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.branch, target)))
+      .orderBy(desc(versions.createdAt))
+      .get();
+
+    if (branched) return { version: branched, type: "branch" };
+
+    return null;
+  }
+
+  /** Version as a matrix row describes it: number, branch and tag names. */
+  private versionSummary(version: Version): MatrixVersionData {
+    const versionTags = this.db.select().from(tags).where(eq(tags.versionId, version.id)).all();
+
+    return {
+      number: version.number,
+      branch: version.branch,
+      tags: versionTags.map((t) => t.name),
+    };
+  }
+
+  async getMatrix(
+    pacticipantName: string,
+    version?: string,
+    to?: string,
+    /** What the caller called the target, used when it resolves to nothing. */
+    targetKind?: MatrixTarget["type"],
+  ): Promise<MatrixRowData[]> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return [];
 
@@ -511,7 +651,7 @@ export class PactBrokerDO extends DurableObject<Env> {
       .where(eq(versions.pacticipantId, pacticipant.id))
       .all();
 
-    const rows: MatrixRow[] = [];
+    const rows: MatrixRowData[] = [];
 
     // Process consumer pacts
     for (const { pact, consumerVersion } of consumerPacts) {
@@ -530,18 +670,29 @@ export class PactBrokerDO extends DurableObject<Env> {
 
       if (!consumer || !provider) continue;
 
-      // Get latest verification for target tag if specified
+      // Narrow to the target's provider version if one was asked for. A target
+      // that names nothing is recorded as unresolved rather than left to look
+      // like an unverified pact.
       let verification: Verification | undefined;
-      if (toTag) {
-        const providerVersion = await this.getLatestVersionByTag(provider.name, toTag);
-        if (providerVersion) {
+      let target: MatrixTarget | undefined;
+      let targetVersion: Version | undefined;
+      if (to) {
+        const resolved = await this.resolveProviderVersionForTarget(provider.name, to);
+        target = {
+          type: resolved?.type ?? targetKind ?? "tag",
+          value: to,
+          resolved: resolved !== null,
+        };
+        targetVersion = resolved?.version;
+
+        if (resolved) {
           verification = this.db
             .select()
             .from(verifications)
             .where(
               and(
                 eq(verifications.pactId, pact.id),
-                eq(verifications.providerVersionId, providerVersion.id),
+                eq(verifications.providerVersionId, resolved.version.id),
               ),
             )
             .orderBy(desc(verifications.verifiedAt))
@@ -556,12 +707,30 @@ export class PactBrokerDO extends DurableObject<Env> {
           .get();
       }
 
+      // The provider version reported is the one that produced the
+      // verification. When the query narrowed to a target that resolved, report
+      // that version even if it has not verified the pact — the row is about
+      // that version, and saying so is what distinguishes "this version has not
+      // verified it" from "nothing matched the target".
+      const providerVersion = verification
+        ? this.db
+            .select()
+            .from(versions)
+            .where(eq(versions.id, verification.providerVersionId))
+            .get()
+        : targetVersion;
+
       rows.push({
-        consumer: { name: consumer.name, version: consumerVersion.number },
-        provider: { name: provider.name, version: null },
-        pactVersion: { sha: pact.contentSha },
-        verificationResult: verification
+        consumer: { name: consumer.name, version: this.versionSummary(consumerVersion) },
+        provider: {
+          name: provider.name,
+          version: providerVersion ? this.versionSummary(providerVersion) : null,
+          ...(target ? { target } : {}),
+        },
+        pact: { sha: pact.contentSha, createdAt: pact.createdAt },
+        verification: verification
           ? {
+              id: verification.id,
               success: verification.success,
               verifiedAt: verification.verifiedAt,
             }
@@ -576,43 +745,9 @@ export class PactBrokerDO extends DurableObject<Env> {
     pacticipantName: string,
     version: string,
     toTag?: string,
-  ): Promise<{ deployable: boolean; reason: string; matrix: MatrixRow[] }> {
+  ): Promise<{ summary: MatrixSummary; notices: MatrixNotice[]; matrix: MatrixRowData[] }> {
     const matrix = await this.getMatrix(pacticipantName, version, toTag);
-
-    if (matrix.length === 0) {
-      return {
-        deployable: true,
-        reason: "No pacts found for this version",
-        matrix: [],
-      };
-    }
-
-    const unverified = matrix.filter((row) => !row.verificationResult);
-    const failed = matrix.filter(
-      (row) => row.verificationResult && !row.verificationResult.success,
-    );
-
-    if (unverified.length > 0) {
-      return {
-        deployable: false,
-        reason: `${unverified.length} pact(s) have not been verified`,
-        matrix,
-      };
-    }
-
-    if (failed.length > 0) {
-      return {
-        deployable: false,
-        reason: `${failed.length} pact verification(s) failed`,
-        matrix,
-      };
-    }
-
-    return {
-      deployable: true,
-      reason: "All pacts verified successfully",
-      matrix,
-    };
+    return { ...summarizeMatrix(toSummaryRows(matrix)), matrix };
   }
 
   // ============ Environment Operations ============

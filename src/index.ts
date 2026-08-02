@@ -11,6 +11,7 @@ import { matrixRoutes } from "./routes/matrix";
 import { environmentRoutes } from "./routes/environments";
 import { webhookRoutes } from "./routes/webhooks";
 import { badgeRoutes } from "./routes/badge";
+import { contractRoutes } from "./routes/contracts";
 import { HAL_BROWSER_HTML } from "./ui/index";
 
 // Re-export the Durable Object class
@@ -184,6 +185,7 @@ app.route("/pacts", verificationRoutes);
 app.route("/pacts", badgeRoutes);
 app.route("/environments", environmentRoutes);
 app.route("/webhooks", webhookRoutes);
+app.route("/contracts", contractRoutes);
 app.route("/", matrixRoutes);
 
 // 404 handler

@@ -2,6 +2,131 @@
 
 All notable changes to `pact-broker-workers`.
 
+## 3.0.0 — 2026-08-02
+
+Acts on a report from the **agent-books** team, who moved the AgentBooks ↔
+Company-Manager contract onto a live instance and found two defects. Checking
+them against the reference implementation turned up a third that neither we nor
+they had noticed: our matrix rows could not be rendered by `pact-broker
+can-i-deploy` at all.
+
+**Breaking on the wire** for anything reading `/matrix` or `/can-i-deploy`.
+Publishing, verification and `for-verification` are untouched.
+
+### Fixed
+
+- **`can-i-deploy` reported an unverified pact while hiding a failed one.**
+  `canIDeploy` partitioned the matrix into unverified and failed, then returned
+  on unverified first. A consumer version with one of each printed
+  `1 pact(s) have not been verified` while a red verification sat in the same
+  matrix — so CI read "hasn't been verified" about a run that had happened and
+  gone red. Those are different facts with different owners.
+
+  `summary.reason` now carries every applicable reason, joined with newlines,
+  as `matrix_decorator.rb` does. The `/matrix` route had a second, separate
+  inline summary with the same defect; both now share one summariser.
+
+- **Provider versions could not carry a branch.** `GET /pacticipants/{name}`
+  advertised only `self` and `pb:versions`. With `providerVersionBranch` set,
+  pact-reference navigates `pb:provider` to that resource, looks for
+  `pb:branch-version`, and — not finding it — abandons the verification results
+  publish entirely, while `verifyProvider()` still resolves normally. The link
+  is now emitted and `PUT /pacticipants/{name}/branches/{branch}/versions/{version}`
+  serves it.
+
+  The link alone would not have been enough: `getOrCreateVersion` returned
+  early on an existing row without recording the branch, so a provider version
+  created by an earlier verification publish stayed `branch: null` forever. It
+  now backfills, and the branch-version resource overwrites.
+
+- **A `can-i-deploy` target that matched nothing looked like an unverified
+  pact.** `getMatrix` resolved `to` through tags only, so a branch-scoped query
+  found no provider version, every row came back `verificationResult: null`, and
+  a *failed* verification was reported as *absent* — the two findings above
+  compounding into one wrong answer.
+
+  `to` now resolves against environments (via currently deployed versions),
+  then tags, then branches, and an unresolved target is reported as itself:
+  `the latest version of X with tag T (no such version exists)`. When a target
+  does resolve, its provider version is reported even if that version has not
+  verified the pact.
+
+- **`to` rejected valid names.** It was validated with `environmentNameSchema`,
+  which forbids `.` and `/`, so `to=release/1.2` and `to=1.0.0-rc` returned 400
+  before resolution was attempted. It now uses `branchSchema`.
+
+### Changed
+
+- **BREAKING — matrix row shape.** `pact_broker-client`'s `TextFormatter`
+  navigates `row[:consumer][:version][:number]`. We emitted `version` as a bare
+  string, so `pact-broker can-i-deploy` died before printing anything:
+
+  ```
+  Error retrieving matrix. TypeError - String does not have #dig method
+    pact_broker-client-1.77.0/lib/pact_broker/client/matrix/text_formatter.rb:95
+    in 'PactBroker::Client::Matrix::TextFormatter.sortable_attributes'
+  ```
+
+  Reproduced against this broker at 2.0.0 with `pactfoundation/pact-cli`, and
+  confirmed fixed at 3.0.0 — the CLI now renders its table, the verification
+  results section, and both reasons. The README's claim that
+  `pact-broker-client` works against this broker was false for that command.
+
+  Rows now follow `matrix_decorator.rb`: `consumer`/`provider` `version` is an
+  object (`number`, `branch`, `tags`, `_links`), `pactVersion: {sha}` becomes
+  `pact: {createdAt, _links}`, and `verificationResult` carries a link to the
+  stored result. The provider version is populated from the verification that
+  produced it, rather than being hardcoded `null`.
+
+- **BREAKING — `summary.deployable` is tri-state.** `true` / `false` / `null`,
+  per `deployment_status_summary.rb#deployable?`. `null` means something is
+  unknown; `false` now means known-bad only. Anything gating on
+  `deployable === true` is unaffected; anything gating on `=== false` should
+  move to `!== true`.
+
+- **`summary` gained `success` / `failed` / `unknown` counts** and the response
+  gained a top-level `notices: [{type, text}]`. The reference client reads both
+  (`matrix/resource.rb`) and silently lost the "unknown" warning without them.
+
+- **`/matrix` accepts `environment=`**, which is what `pact_broker-client` sends
+  for `--to-environment`.
+
+### Added — `pact-broker-client` command support
+
+Found by running the real CLI while checking the compatibility claim above.
+Each failed *quietly enough to look like success* from the broker's side.
+
+- **`POST /contracts/publish`**, advertised as `pb:publish-contracts`. Without
+  it `pact-broker publish` falls back to a legacy path that cannot record
+  branches at all — it prints "This version of the Pact Broker does not support
+  versions with branches or build URLs", publishes the pact anyway, and the
+  version lands with `branch: null` while the command exits 0. Accepts the
+  documented body (base64 contract content, `branch`, `buildUrl`, `tags`) and
+  returns `notices` for the CLI to render.
+- **`POST /environments`** so `create-environment` works, and `GET /environments`
+  now carries a named `pb:environments` link collection — the CLI looks
+  environments up by link name, and its absence crashed `record-deployment`
+  with `NoMethodError - undefined method 'find' for nil`.
+- **`record-deployment` support**: `pb:pacticipant-version` on the index, a
+  per-environment `pb:record-deployment` link collection on the version
+  resource, and the `POST` endpoint behind it. Previously it failed outright
+  with `Could not find relation 'pb:pacticipant-version'`.
+- **`PUT /pacticipants/{name}/versions/{version}`**, plus
+  `pb:pacticipant-branch-version` and `pb:pacticipant-version-tag` on the index.
+- An unresolved target is now described in the terms the caller used:
+  `--to-environment` naming an empty environment reports "no version is
+  currently recorded as deployed/released in this environment" rather than
+  calling it a missing tag.
+
+Verified end to end against `pactfoundation/pact-cli`: `publish --branch
+--build-url --tag`, `create-environment`, `record-deployment`, and
+`can-i-deploy --to-environment`.
+
+### Notes
+
+Deliberate remaining gaps are listed in `BACKLOG.md` under "Reference-broker
+parity" rather than left implicit.
+
 ## 2.0.0 — 2026-08-01
 
 Removes the AWS dependency that crept into the deployment path, removes the

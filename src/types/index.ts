@@ -1,4 +1,7 @@
 import type { PactBrokerDO } from "../durable-objects/pact-broker";
+import type { MatrixSummary, MatrixNotice } from "../services/matrix-summary";
+
+export type { MatrixSummary, MatrixNotice };
 
 // Cloudflare bindings
 export interface Env {
@@ -31,6 +34,8 @@ export interface HalLink {
   href: string;
   title?: string;
   templated?: boolean;
+  /** Used to pick one link out of a collection — see `pb:record-deployment`. */
+  name?: string;
 }
 
 export interface HalLinks {
@@ -85,29 +90,66 @@ export interface VerificationResultResponse extends HalResource {
   verifiedAt: string;
 }
 
+/**
+ * A matrix row as the durable object knows it — no HAL, because the DO has no
+ * request host. `MatrixRow` below is this decorated with links at the route.
+ */
+export interface MatrixVersionData {
+  number: string;
+  branch: string | null;
+  tags: string[];
+}
+
+/**
+ * How a `to` / `tag` / `environment` narrowing was resolved for one row.
+ * `resolved: false` means the target named nothing — a different fact from
+ * "nobody has verified this yet", and reported as such.
+ */
+export interface MatrixTarget {
+  type: "tag" | "branch" | "environment";
+  value: string;
+  resolved: boolean;
+}
+
+export interface MatrixRowData {
+  consumer: { name: string; version: MatrixVersionData };
+  provider: { name: string; version: MatrixVersionData | null; target?: MatrixTarget };
+  pact: { sha: string; createdAt: string };
+  verification: { id: number; success: boolean; verifiedAt: string } | null;
+}
+
+/**
+ * Wire shape, per matrix_decorator.rb. `version` is an object on both sides:
+ * pact_broker-client's TextFormatter reads `row[:consumer][:version][:number]`,
+ * and a bare string there raises TypeError in Ruby rather than degrading.
+ */
+export interface MatrixVersion extends HalResource {
+  number: string;
+  branch: string | null;
+  tags: Array<{ name: string }>;
+}
+
 export interface MatrixRow {
-  consumer: { name: string; version: string };
-  provider: { name: string; version: string | null };
-  pactVersion: { sha: string };
-  verificationResult?: {
-    success: boolean;
-    verifiedAt: string;
-  } | null;
+  consumer: { name: string; version: MatrixVersion } & HalResource;
+  provider: { name: string; version: MatrixVersion | null } & HalResource;
+  pact: { createdAt: string } & HalResource;
+  verificationResult:
+    | ({
+        success: boolean;
+        verifiedAt: string;
+      } & HalResource)
+    | null;
 }
 
 export interface MatrixResponse extends HalResource {
-  summary: {
-    deployable: boolean;
-    reason: string;
-  };
+  summary: MatrixSummary;
+  notices: MatrixNotice[];
   matrix: MatrixRow[];
 }
 
 export interface CanIDeployResponse extends HalResource {
-  summary: {
-    deployable: boolean;
-    reason: string;
-  };
+  summary: MatrixSummary;
+  notices: MatrixNotice[];
   matrix: MatrixRow[];
 }
 

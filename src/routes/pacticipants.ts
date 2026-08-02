@@ -11,6 +11,7 @@ import {
   nameSchema,
   versionSchema,
   tagSchema,
+  branchSchema,
   environmentNameSchema,
   validateParam,
 } from "../lib/validation";
@@ -125,10 +126,132 @@ app.get("/:name/versions/:version", async (c) => {
     branch: version.branch,
     buildUrl: version.buildUrl,
     createdAt: version.createdAt,
-    _links: hal.version(name, version.number),
+    _links: {
+      ...hal.version(name, version.number),
+      "pb:record-deployment": hal.recordDeployment(
+        name,
+        version.number,
+        (await broker.getAllEnvironments()).map((e) => e.name),
+      ),
+    },
   };
 
   return c.json(response);
+});
+
+// Create or update a version. pact-broker-client PUTs here bare
+// (versions/create.rb#create_version) and, on the legacy publish path, with
+// {branch, buildUrl} (publish_pacts_the_old_way.rb#version_body). The body is
+// optional; an unparseable one is ignored rather than rejected.
+app.put("/:name/versions/:version", async (c) => {
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  let body: { branch?: unknown; buildUrl?: unknown } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    // A bare PUT is the documented case.
+  }
+
+  let branch: string | undefined;
+  if (typeof body.branch === "string" && body.branch !== "") {
+    const branchResult = validateParam(c, branchSchema, body.branch, "branch");
+    if (!branchResult.valid) return branchResult.response;
+    branch = branchResult.value;
+  }
+
+  const buildUrl =
+    typeof body.buildUrl === "string" && body.buildUrl !== "" ? body.buildUrl : undefined;
+
+  const broker = getBroker(c.env);
+  const { version } = await broker.getOrCreateVersion(name, versionNumber, branch, buildUrl);
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: VersionResponse = {
+    number: version.number,
+    branch: version.branch,
+    buildUrl: version.buildUrl,
+    createdAt: version.createdAt,
+    _links: hal.version(name, version.number),
+  };
+
+  return c.json(response, 200, { "Content-Type": "application/hal+json" });
+});
+
+// Record a deployment the way pact-broker-client does: POST to the
+// per-environment link advertised on the version resource.
+app.post("/:name/versions/:version/deployed-versions/environment/:environment", async (c) => {
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const environmentResult = validateParam(
+    c,
+    environmentNameSchema,
+    c.req.param("environment"),
+    "environment",
+  );
+  if (!environmentResult.valid) return environmentResult.response;
+  const environmentName = environmentResult.value;
+
+  const broker = getBroker(c.env);
+  const deployment = await broker.recordDeployment(name, versionNumber, environmentName);
+
+  if (!deployment) {
+    return c.json({ error: "Not Found", message: "Version not found" }, 404);
+  }
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: DeploymentResponse = {
+    environment: environmentName,
+    deployedAt: deployment.deployedAt,
+    undeployedAt: deployment.undeployedAt,
+    _links: hal.deployment(name, versionNumber, environmentName),
+  };
+
+  return c.json(response, 201, { "Content-Type": "application/hal+json" });
+});
+
+// Create or update a version on a branch — the pb:branch-version resource.
+//
+// pact-reference PUTs "{}" here before publishing verification results, so the
+// body is deliberately ignored: requiring valid JSON would reject that client.
+app.put("/:name/branches/:branch/versions/:version", async (c) => {
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const branchResult = validateParam(c, branchSchema, c.req.param("branch"), "branch");
+  if (!branchResult.valid) return branchResult.response;
+  const branch = branchResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const broker = getBroker(c.env);
+  const version = await broker.recordVersionBranch(name, versionNumber, branch);
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: VersionResponse = {
+    number: version.number,
+    branch: version.branch,
+    buildUrl: version.buildUrl,
+    createdAt: version.createdAt,
+    _links: hal.version(name, version.number),
+  };
+
+  return c.json(response, 200, { "Content-Type": "application/hal+json" });
 });
 
 // Get tags for a version

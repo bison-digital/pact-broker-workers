@@ -39,6 +39,30 @@ describe("HalBuilder", () => {
     );
   });
 
+  // pacticipant_decorator.rb defines pb:branch-version on the pacticipant
+  // resource; pact-reference's publish_provider_branch navigates pb:provider
+  // to find it, then substitutes {branch} and {version}. Percent-encoding the
+  // braces would leave the client with a URL it cannot template.
+  it("pacticipant() advertises a templated pb:branch-version link", () => {
+    const hal = new HalBuilder("https://broker.example.com");
+    const links = hal.pacticipant("agent-books");
+
+    expect(links["pb:branch-version"]).toEqual({
+      href: "https://broker.example.com/pacticipants/agent-books/branches/{branch}/versions/{version}",
+      title: "Branch version",
+      templated: true,
+    });
+  });
+
+  it("pacticipant() percent-encodes the name but not the template variables", () => {
+    const hal = new HalBuilder("https://broker.example.com");
+    const links = hal.pacticipant("a b");
+
+    expect(links["pb:branch-version"]).toMatchObject({
+      href: "https://broker.example.com/pacticipants/a%20b/branches/{branch}/versions/{version}",
+    });
+  });
+
   it("pact() percent-encodes names with special chars", () => {
     const hal = new HalBuilder("https://broker.example.com");
     const links = hal.pact("p/rov", "c ons", "1.0.0", "a".repeat(64));

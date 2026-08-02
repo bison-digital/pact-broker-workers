@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import type { Env, MatrixResponse, CanIDeployResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import { summarizeMatrix, toSummaryRows } from "../services/matrix-summary";
+import { decorateMatrixRow } from "../services/matrix-row";
 import {
   nameSchema,
   versionSchema,
-  tagSchema,
-  environmentNameSchema,
+  branchSchema,
   validateParam,
   validateOptionalQuery,
 } from "../lib/validation";
@@ -23,7 +24,15 @@ app.get("/matrix", async (c) => {
   // Parse query params - supports both array format and single values
   const pacticipantRaw = c.req.query("q[][pacticipant]") ?? c.req.query("pacticipant");
   const versionRaw = c.req.query("q[][version]") ?? c.req.query("version");
-  const latestTagRaw = c.req.query("q[][tag]") ?? c.req.query("tag");
+  // The reference client sends `environment=` for --to-environment and `tag=`
+  // for --to (matrix/query.rb#query_options). Both narrow the provider side, so
+  // both feed the same target resolution.
+  const environmentRaw = c.req.query("q[][environment]") ?? c.req.query("environment");
+  const targetRaw = environmentRaw ?? c.req.query("q[][tag]") ?? c.req.query("tag");
+  // Remember which param it arrived on: if it resolves to nothing we still have
+  // to describe it, and calling an empty environment a missing tag sends the
+  // reader looking for the wrong thing.
+  const targetKind = environmentRaw ? "environment" : "tag";
 
   if (!pacticipantRaw) {
     return c.json(
@@ -43,25 +52,19 @@ app.get("/matrix", async (c) => {
   if (!versionResult.valid) return versionResult.response;
   const version = versionResult.value;
 
-  const tagResult = validateOptionalQuery(c, tagSchema, latestTagRaw, "tag");
-  if (!tagResult.valid) return tagResult.response;
-  const latestTag = tagResult.value;
+  const targetResult = validateOptionalQuery(c, branchSchema, targetRaw, "tag");
+  if (!targetResult.valid) return targetResult.response;
+  const target = targetResult.value;
 
   const broker = getBroker(c.env);
-  const matrix = await broker.getMatrix(pacticipant, version, latestTag);
+  const matrix = await broker.getMatrix(pacticipant, version, target, targetKind);
+  const { summary, notices } = summarizeMatrix(toSummaryRows(matrix));
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: MatrixResponse = {
-    summary: {
-      deployable: matrix.every((row) => row.verificationResult?.success === true),
-      reason:
-        matrix.length === 0
-          ? "No pacts found"
-          : matrix.every((row) => row.verificationResult?.success === true)
-            ? "All pacts verified successfully"
-            : "Some pacts failed verification or are unverified",
-    },
-    matrix,
+    summary,
+    notices,
+    matrix: matrix.map((row) => decorateMatrixRow(hal, row)),
     _links: hal.matrix(),
   };
 
@@ -92,9 +95,10 @@ app.get("/can-i-deploy", async (c) => {
   if (!versionResult.valid) return versionResult.response;
   const version = versionResult.value;
 
-  // 'to' can be either an environment name or a tag — both use the same permitted
-  // character set, so validate with environmentNameSchema if present (strictest).
-  const toResult = validateOptionalQuery(c, environmentNameSchema, toRaw, "to");
+  // 'to' names an environment, a tag or a branch and we do not know which until
+  // we try to resolve it, so validate against the most permissive of the three.
+  // environmentNameSchema would reject `release/1.2` and `1.0.0-rc` outright.
+  const toResult = validateOptionalQuery(c, branchSchema, toRaw, "to");
   if (!toResult.valid) return toResult.response;
   const toTag = toResult.value;
 
@@ -103,16 +107,13 @@ app.get("/can-i-deploy", async (c) => {
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: CanIDeployResponse = {
-    summary: {
-      deployable: result.deployable,
-      reason: result.reason,
-    },
-    matrix: result.matrix,
+    summary: result.summary,
+    notices: result.notices,
+    matrix: result.matrix.map((row) => decorateMatrixRow(hal, row)),
     _links: hal.canIDeploy(),
   };
 
-  // Return appropriate status code based on deployability
-  return c.json(response, result.deployable ? 200 : 200);
+  return c.json(response);
 });
 
 export { app as matrixRoutes };

@@ -15,10 +15,13 @@ Cloudflare Worker (Hono + auth + CORS)
 
 ### Features
 
-- HAL-style API responses compatible with `pact-broker-client`
+- HAL-style API responses compatible with `pact-broker-client` — `publish` (including `--branch`,
+  `--build-url` and `--tag`), `create-environment`, `record-deployment` and `can-i-deploy`
+  (including `--to-environment`) are verified against the real CLI; remaining gaps are listed in
+  [BACKLOG.md](BACKLOG.md#reference-broker-parity--known-remaining-gaps)
 - Bearer-token auth (optional public-read mode)
 - Pact publish + retrieve (latest / tag / branch / version selectors)
-- Verification results and `pacts-for-verification`
+- Verification results and `pacts-for-verification`, including provider version branches (`pb:branch-version`)
 - Matrix, `can-i-deploy`, deployments/environments tracking
 - Zero external data store — all state in DO-local SQLite
 - Per-IP rate limiting enforced in the Worker (works on every Cloudflare plan)
@@ -168,6 +171,7 @@ All endpoints require `Authorization: Bearer <token>` unless `ALLOW_PUBLIC_READ=
 | `GET` | `/pacticipants/{name}` | Get one |
 | `GET` | `/pacticipants/{name}/versions` | List versions |
 | `GET` | `/pacticipants/{name}/versions/{version}` | Get version |
+| `PUT` | `/pacticipants/{name}/branches/{branch}/versions/{version}` | Put a version on a branch (`pb:branch-version`) |
 | `PUT` | `/pacticipants/{name}/versions/{version}/tags/{tag}` | Add tag |
 | `GET` | `/pacticipants/{name}/versions/{version}/tags` | List tags |
 | `GET`/`PUT` | `/environments/{name}` | Manage environment |
@@ -176,8 +180,14 @@ All endpoints require `Authorization: Bearer <token>` unless `ALLOW_PUBLIC_READ=
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/matrix?pacticipant={name}&version={version}` | Matrix query |
-| `GET` | `/can-i-deploy?pacticipant={name}&version={version}&to={tag}` | Deploy gate |
+| `GET` | `/matrix?pacticipant={name}&version={version}` | Matrix query. Narrow the provider side with `tag=` or `environment=` |
+| `GET` | `/can-i-deploy?pacticipant={name}&version={version}&to={target}` | Deploy gate. `to` may name an environment, a tag or a branch |
+
+`summary` follows the reference broker: `deployable` is **tri-state**
+(`true` / `false` / `null` — `null` means something is unverified, which is not
+the same as failed), `reason` carries *every* applicable reason joined with
+newlines, and `success` / `failed` / `unknown` counts sit alongside. A `notices`
+array repeats the reasons with a `type`.
 
 ### Webhooks
 
