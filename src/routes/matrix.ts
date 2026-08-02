@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env, MatrixResponse, CanIDeployResponse } from "../types";
 import { HalBuilder, getBaseUrl } from "../services/hal";
+import { summarizeMatrix, toSummaryRows } from "../services/matrix-summary";
 import {
   nameSchema,
   versionSchema,
@@ -49,18 +50,12 @@ app.get("/matrix", async (c) => {
 
   const broker = getBroker(c.env);
   const matrix = await broker.getMatrix(pacticipant, version, latestTag);
+  const { summary, notices } = summarizeMatrix(toSummaryRows(matrix));
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: MatrixResponse = {
-    summary: {
-      deployable: matrix.every((row) => row.verificationResult?.success === true),
-      reason:
-        matrix.length === 0
-          ? "No pacts found"
-          : matrix.every((row) => row.verificationResult?.success === true)
-            ? "All pacts verified successfully"
-            : "Some pacts failed verification or are unverified",
-    },
+    summary,
+    notices,
     matrix,
     _links: hal.matrix(),
   };
@@ -103,16 +98,13 @@ app.get("/can-i-deploy", async (c) => {
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
   const response: CanIDeployResponse = {
-    summary: {
-      deployable: result.deployable,
-      reason: result.reason,
-    },
+    summary: result.summary,
+    notices: result.notices,
     matrix: result.matrix,
     _links: hal.canIDeploy(),
   };
 
-  // Return appropriate status code based on deployability
-  return c.json(response, result.deployable ? 200 : 200);
+  return c.json(response);
 });
 
 export { app as matrixRoutes };

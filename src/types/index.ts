@@ -1,4 +1,7 @@
 import type { PactBrokerDO } from "../durable-objects/pact-broker";
+import type { MatrixSummary, MatrixNotice } from "../services/matrix-summary";
+
+export type { MatrixSummary, MatrixNotice };
 
 // Cloudflare bindings
 export interface Env {
@@ -96,18 +99,14 @@ export interface MatrixRow {
 }
 
 export interface MatrixResponse extends HalResource {
-  summary: {
-    deployable: boolean;
-    reason: string;
-  };
+  summary: MatrixSummary;
+  notices: MatrixNotice[];
   matrix: MatrixRow[];
 }
 
 export interface CanIDeployResponse extends HalResource {
-  summary: {
-    deployable: boolean;
-    reason: string;
-  };
+  summary: MatrixSummary;
+  notices: MatrixNotice[];
   matrix: MatrixRow[];
 }
 

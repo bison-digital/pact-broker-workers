@@ -21,7 +21,7 @@ describe("/matrix", () => {
     expect((body as { message: string }).message).toMatch(/pacticipant/i);
   });
 
-  it("verified pact → deployable:true with 'All pacts verified' reason", async () => {
+  it("verified pact → deployable:true with the reference broker's success reason", async () => {
     const { status, body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
       headers: authHeaders(),
     });
@@ -29,17 +29,19 @@ describe("/matrix", () => {
     expect(body).toMatchObject({
       summary: {
         deployable: true,
-        reason: "All pacts verified successfully",
+        reason: "All required verification results are published and successful",
       },
     });
   });
 
-  it("unverified pact → deployable:false with reason", async () => {
+  // Unverified is "don't know", not "known bad" — deployment_status_summary.rb
+  // returns nil, and the CLI treats anything other than true as a stop.
+  it("unverified pact → deployable:null, not false", async () => {
     const { status, body } = await reqJson("/matrix?pacticipant=mx-c2&version=1.0.0", {
       headers: authHeaders(),
     });
     expect(status).toBe(200);
-    expect((body as { summary: { deployable: boolean } }).summary.deployable).toBe(false);
+    expect((body as { summary: { deployable: boolean | null } }).summary.deployable).toBeNull();
   });
 
   it("response shape includes summary, matrix, _links", async () => {
@@ -49,6 +51,50 @@ describe("/matrix", () => {
     expect(body).toHaveProperty("summary");
     expect(body).toHaveProperty("matrix");
     expect(body).toHaveProperty("_links");
+  });
+});
+
+// Reported by agent-books 2026-08-02: a consumer version with one failed and
+// one unverified pact reported only the unverified count, so CI printed
+// "has not been verified" about a run that had gone red.
+describe("/can-i-deploy with a mixed matrix", () => {
+  beforeAll(async () => {
+    const { body: failing } = await publishPact("mix-c", "mix-p-red", "1.0.0");
+    await publishVerification(
+      "mix-p-red",
+      "mix-c",
+      (failing as { contentSha: string }).contentSha,
+      false,
+    );
+    // second provider, same consumer version, never verified
+    await publishPact("mix-c", "mix-p-none", "1.0.0", { path: "/other" });
+  });
+
+  it("names the failure as well as the unverified pact", async () => {
+    const { body } = await reqJson("/can-i-deploy?pacticipant=mix-c&version=1.0.0", {
+      headers: authHeaders(),
+    });
+    const summary = (body as { summary: { reason: string } }).summary;
+
+    expect(summary.reason).toContain(
+      "The verification for the pact between version 1.0.0 of mix-c and any version of mix-p-red failed",
+    );
+    expect(summary.reason).toContain(
+      "There is no verified pact between version 1.0.0 of mix-c and any version of mix-p-none",
+    );
+  });
+
+  it("counts the failure and the unverified pact separately", async () => {
+    const { body } = await reqJson("/can-i-deploy?pacticipant=mix-c&version=1.0.0", {
+      headers: authHeaders(),
+    });
+
+    expect((body as { summary: Record<string, unknown> }).summary).toMatchObject({
+      deployable: false,
+      success: 0,
+      failed: 1,
+      unknown: 1,
+    });
   });
 });
 

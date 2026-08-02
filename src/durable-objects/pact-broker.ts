@@ -22,6 +22,12 @@ import {
   type WebhookExecution,
 } from "../db/schema";
 import { runMigrations } from "../db/migrations";
+import {
+  summarizeMatrix,
+  toSummaryRows,
+  type MatrixSummary,
+  type MatrixNotice,
+} from "../services/matrix-summary";
 import type {
   Env,
   PactContent,
@@ -576,43 +582,9 @@ export class PactBrokerDO extends DurableObject<Env> {
     pacticipantName: string,
     version: string,
     toTag?: string,
-  ): Promise<{ deployable: boolean; reason: string; matrix: MatrixRow[] }> {
+  ): Promise<{ summary: MatrixSummary; notices: MatrixNotice[]; matrix: MatrixRow[] }> {
     const matrix = await this.getMatrix(pacticipantName, version, toTag);
-
-    if (matrix.length === 0) {
-      return {
-        deployable: true,
-        reason: "No pacts found for this version",
-        matrix: [],
-      };
-    }
-
-    const unverified = matrix.filter((row) => !row.verificationResult);
-    const failed = matrix.filter(
-      (row) => row.verificationResult && !row.verificationResult.success,
-    );
-
-    if (unverified.length > 0) {
-      return {
-        deployable: false,
-        reason: `${unverified.length} pact(s) have not been verified`,
-        matrix,
-      };
-    }
-
-    if (failed.length > 0) {
-      return {
-        deployable: false,
-        reason: `${failed.length} pact verification(s) failed`,
-        matrix,
-      };
-    }
-
-    return {
-      deployable: true,
-      reason: "All pacts verified successfully",
-      matrix,
-    };
+    return { ...summarizeMatrix(toSummaryRows(matrix)), matrix };
   }
 
   // ============ Environment Operations ============
