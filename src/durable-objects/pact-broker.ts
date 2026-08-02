@@ -124,6 +124,18 @@ export class PactBrokerDO extends DurableObject<Env> {
       .get();
 
     if (existing) {
+      // Backfill only. A publish that mentions a branch or build URL fills in
+      // what we don't know yet, but never overwrites what is already recorded —
+      // that is what the pb:branch-version resource is for.
+      const backfill: Partial<Version> = {};
+      if (branch && !existing.branch) backfill.branch = branch;
+      if (buildUrl && !existing.buildUrl) backfill.buildUrl = buildUrl;
+
+      if (Object.keys(backfill).length > 0) {
+        this.db.update(versions).set(backfill).where(eq(versions.id, existing.id)).run();
+        return { pacticipant, version: { ...existing, ...backfill } };
+      }
+
       return { pacticipant, version: existing };
     }
 
@@ -139,6 +151,40 @@ export class PactBrokerDO extends DurableObject<Env> {
       .get();
 
     return { pacticipant, version };
+  }
+
+  /**
+   * Create or update a version's branch — the resource behind pb:branch-version.
+   *
+   * Unlike getOrCreateVersion this overwrites an existing branch: a verifier
+   * PUTting here is making an explicit statement about the version, where a
+   * pact publish only mentions its branch in passing.
+   */
+  async recordVersionBranch(
+    pacticipantName: string,
+    versionNumber: string,
+    branch: string,
+  ): Promise<Version> {
+    const pacticipant = await this.getOrCreatePacticipant(pacticipantName);
+
+    const existing = this.db
+      .select()
+      .from(versions)
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.number, versionNumber)))
+      .get();
+
+    if (existing) {
+      if (existing.branch === branch) return existing;
+
+      this.db.update(versions).set({ branch }).where(eq(versions.id, existing.id)).run();
+      return { ...existing, branch };
+    }
+
+    return this.db
+      .insert(versions)
+      .values({ pacticipantId: pacticipant.id, number: versionNumber, branch })
+      .returning()
+      .get();
   }
 
   async getVersion(pacticipantName: string, versionNumber: string): Promise<Version | undefined> {

@@ -11,6 +11,7 @@ import {
   nameSchema,
   versionSchema,
   tagSchema,
+  branchSchema,
   environmentNameSchema,
   validateParam,
 } from "../lib/validation";
@@ -129,6 +130,38 @@ app.get("/:name/versions/:version", async (c) => {
   };
 
   return c.json(response);
+});
+
+// Create or update a version on a branch — the pb:branch-version resource.
+//
+// pact-reference PUTs "{}" here before publishing verification results, so the
+// body is deliberately ignored: requiring valid JSON would reject that client.
+app.put("/:name/branches/:branch/versions/:version", async (c) => {
+  const nameResult = validateParam(c, nameSchema, c.req.param("name"), "name");
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const branchResult = validateParam(c, branchSchema, c.req.param("branch"), "branch");
+  if (!branchResult.valid) return branchResult.response;
+  const branch = branchResult.value;
+
+  const versionResult = validateParam(c, versionSchema, c.req.param("version"), "version");
+  if (!versionResult.valid) return versionResult.response;
+  const versionNumber = versionResult.value;
+
+  const broker = getBroker(c.env);
+  const version = await broker.recordVersionBranch(name, versionNumber, branch);
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: VersionResponse = {
+    number: version.number,
+    branch: version.branch,
+    buildUrl: version.buildUrl,
+    createdAt: version.createdAt,
+    _links: hal.version(name, version.number),
+  };
+
+  return c.json(response, 200, { "Content-Type": "application/hal+json" });
 });
 
 // Get tags for a version

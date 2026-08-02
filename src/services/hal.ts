@@ -39,9 +39,19 @@ export class HalBuilder {
   }
 
   pacticipant(name: string): HalLinks {
+    const p = encodeURIComponent(name);
     return {
-      self: this.link(`/pacticipants/${encodeURIComponent(name)}`),
-      "pb:versions": this.link(`/pacticipants/${encodeURIComponent(name)}/versions`, "Versions"),
+      self: this.link(`/pacticipants/${p}`),
+      "pb:versions": this.link(`/pacticipants/${p}/versions`, "Versions"),
+      // Verifiers publishing with a provider branch navigate pb:provider to
+      // this resource and follow pb:branch-version; without the link,
+      // pact-reference abandons the whole results publish. {branch} and
+      // {version} stay literal — the client fills them in.
+      "pb:branch-version": this.link(
+        `/pacticipants/${p}/branches/{branch}/versions/{version}`,
+        "Branch version",
+        true,
+      ),
     };
   }
 
