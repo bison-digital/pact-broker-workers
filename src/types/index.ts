@@ -34,6 +34,8 @@ export interface HalLink {
   href: string;
   title?: string;
   templated?: boolean;
+  /** Used to pick one link out of a collection — see `pb:record-deployment`. */
+  name?: string;
 }
 
 export interface HalLinks {

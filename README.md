@@ -15,9 +15,10 @@ Cloudflare Worker (Hono + auth + CORS)
 
 ### Features
 
-- HAL-style API responses compatible with `pact-broker-client` — `publish` and `can-i-deploy` are
-  verified against the real CLI. `publish --branch` and `record-deployment` are **not** yet
-  supported; see [BACKLOG.md](BACKLOG.md#reference-broker-parity--known-remaining-gaps)
+- HAL-style API responses compatible with `pact-broker-client` — `publish` (including `--branch`,
+  `--build-url` and `--tag`), `create-environment`, `record-deployment` and `can-i-deploy`
+  (including `--to-environment`) are verified against the real CLI; remaining gaps are listed in
+  [BACKLOG.md](BACKLOG.md#reference-broker-parity--known-remaining-gaps)
 - Bearer-token auth (optional public-read mode)
 - Pact publish + retrieve (latest / tag / branch / version selectors)
 - Verification results and `pacts-for-verification`, including provider version branches (`pb:branch-version`)

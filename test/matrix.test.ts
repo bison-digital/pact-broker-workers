@@ -142,6 +142,22 @@ describe("/matrix", () => {
     expect(summary.reason).toContain("currently in mx-prod (p-2.0.0)");
   });
 
+  // --to-environment sends `environment=`. If nothing is deployed there, the
+  // reason must say so in environment terms; calling it a missing *tag* sends
+  // the reader looking for the wrong thing.
+  it("describes an empty environment as an environment, not a tag", async () => {
+    await ensureEnvironment("mx-empty-env");
+
+    const { body } = await reqJson(
+      "/matrix?pacticipant=mx-c1&version=1.0.0&environment=mx-empty-env",
+      { headers: authHeaders() },
+    );
+
+    expect((body as { summary: { reason: string } }).summary.reason).toContain(
+      "currently in mx-empty-env (no version is currently recorded as deployed/released in this environment)",
+    );
+  });
+
   it("response shape includes summary, matrix, _links", async () => {
     const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
       headers: authHeaders(),

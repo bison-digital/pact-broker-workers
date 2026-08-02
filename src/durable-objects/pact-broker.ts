@@ -188,6 +188,20 @@ export class PactBrokerDO extends DurableObject<Env> {
       .get();
   }
 
+  /** Explicitly set a version's build URL — the contracts/publish path states it. */
+  async recordVersionBuildUrl(
+    pacticipantName: string,
+    versionNumber: string,
+    buildUrl: string,
+  ): Promise<Version | undefined> {
+    const version = await this.getVersion(pacticipantName, versionNumber);
+    if (!version) return undefined;
+    if (version.buildUrl === buildUrl) return version;
+
+    this.db.update(versions).set({ buildUrl }).where(eq(versions.id, version.id)).run();
+    return { ...version, buildUrl };
+  }
+
   async getVersion(pacticipantName: string, versionNumber: string): Promise<Version | undefined> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return undefined;
@@ -620,6 +634,8 @@ export class PactBrokerDO extends DurableObject<Env> {
     pacticipantName: string,
     version?: string,
     to?: string,
+    /** What the caller called the target, used when it resolves to nothing. */
+    targetKind?: MatrixTarget["type"],
   ): Promise<MatrixRowData[]> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return [];
@@ -662,7 +678,11 @@ export class PactBrokerDO extends DurableObject<Env> {
       let targetVersion: Version | undefined;
       if (to) {
         const resolved = await this.resolveProviderVersionForTarget(provider.name, to);
-        target = { type: resolved?.type ?? "tag", value: to, resolved: resolved !== null };
+        target = {
+          type: resolved?.type ?? targetKind ?? "tag",
+          value: to,
+          resolved: resolved !== null,
+        };
         targetVersion = resolved?.version;
 
         if (resolved) {

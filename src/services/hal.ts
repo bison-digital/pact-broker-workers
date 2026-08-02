@@ -35,6 +35,26 @@ export class HalBuilder {
         true,
       ),
       "pb:environments": this.link("/environments", "Environments"),
+      "pb:publish-contracts": this.link("/contracts/publish", "Publish contracts"),
+      // pact-broker-client navigates these from the index, not from the
+      // pacticipant. `pb:pacticipant-branch-version` in particular gates the
+      // whole `publish --branch` flow (versions/create.rb#branch_versions_supported?)
+      // — without it the CLI records no branch and still reports success.
+      "pb:pacticipant-version": this.link(
+        "/pacticipants/{pacticipant}/versions/{version}",
+        "Get, create or delete a pacticipant version",
+        true,
+      ),
+      "pb:pacticipant-branch-version": this.link(
+        "/pacticipants/{pacticipant}/branches/{branch}/versions/{version}",
+        "Get or add/create a pacticipant version for a branch",
+        true,
+      ),
+      "pb:pacticipant-version-tag": this.link(
+        "/pacticipants/{pacticipant}/versions/{version}/tags/{tag}",
+        "Get, create or delete a tag for a pacticipant version",
+        true,
+      ),
     };
   }
 
@@ -63,6 +83,24 @@ export class HalBuilder {
       "pb:pacticipant": this.link(`/pacticipants/${p}`),
       "pb:tags": this.link(`/pacticipants/${p}/versions/${v}/tags`, "Tags"),
     };
+  }
+
+  /**
+   * One `pb:record-deployment` link per environment, each named after it.
+   * `pact-broker record-deployment` reads this collection off the version
+   * resource and POSTs to the entry whose `name` matches `--environment`
+   * (record_release.rb#get_record_action_relation).
+   */
+  recordDeployment(pacticipant: string, version: string, environmentNames: string[]): HalLink[] {
+    const p = encodeURIComponent(pacticipant);
+    const v = encodeURIComponent(version);
+    return environmentNames.map((environment) => ({
+      ...this.link(
+        `/pacticipants/${p}/versions/${v}/deployed-versions/environment/${encodeURIComponent(environment)}`,
+        `Record deployment to ${environment}`,
+      ),
+      name: environment,
+    }));
   }
 
   tag(pacticipant: string, version: string, tagName: string): HalLinks {

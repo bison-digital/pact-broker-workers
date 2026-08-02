@@ -20,6 +20,12 @@ app.get("/", async (c) => {
   const response = {
     _links: {
       self: hal.link("/environments"),
+      // pact-broker-client looks the environment up by link `name` here
+      // (record_release.rb#environment_exists?), not in _embedded.
+      "pb:environments": envs.map((e) => ({
+        ...hal.link(`/environments/${encodeURIComponent(e.name)}`, e.displayName ?? e.name),
+        name: e.name,
+      })),
     },
     _embedded: {
       environments: envs.map((e) => ({
@@ -33,6 +39,39 @@ app.get("/", async (c) => {
   };
 
   return c.json(response);
+});
+
+// Create an environment — `pact-broker create-environment` POSTs the collection.
+app.post("/", async (c) => {
+  let body: EnvironmentRequest & { name?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Bad Request", message: "Invalid JSON body" }, 400);
+  }
+
+  const nameResult = validateParam(
+    c,
+    environmentNameSchema,
+    typeof body.name === "string" ? body.name : undefined,
+    "name",
+  );
+  if (!nameResult.valid) return nameResult.response;
+  const name = nameResult.value;
+
+  const broker = getBroker(c.env);
+  const env = await broker.getOrCreateEnvironment(name, body.displayName, body.production);
+
+  const hal = new HalBuilder(getBaseUrl(c.req.raw));
+  const response: EnvironmentResponse = {
+    name: env.name,
+    displayName: env.displayName,
+    production: env.production ?? false,
+    createdAt: env.createdAt,
+    _links: hal.environment(env.name),
+  };
+
+  return c.json(response, 201, { "Content-Type": "application/hal+json" });
 });
 
 // Get a specific environment

@@ -27,11 +27,12 @@ app.get("/matrix", async (c) => {
   // The reference client sends `environment=` for --to-environment and `tag=`
   // for --to (matrix/query.rb#query_options). Both narrow the provider side, so
   // both feed the same target resolution.
-  const targetRaw =
-    c.req.query("q[][environment]") ??
-    c.req.query("environment") ??
-    c.req.query("q[][tag]") ??
-    c.req.query("tag");
+  const environmentRaw = c.req.query("q[][environment]") ?? c.req.query("environment");
+  const targetRaw = environmentRaw ?? c.req.query("q[][tag]") ?? c.req.query("tag");
+  // Remember which param it arrived on: if it resolves to nothing we still have
+  // to describe it, and calling an empty environment a missing tag sends the
+  // reader looking for the wrong thing.
+  const targetKind = environmentRaw ? "environment" : "tag";
 
   if (!pacticipantRaw) {
     return c.json(
@@ -56,7 +57,7 @@ app.get("/matrix", async (c) => {
   const target = targetResult.value;
 
   const broker = getBroker(c.env);
-  const matrix = await broker.getMatrix(pacticipant, version, target);
+  const matrix = await broker.getMatrix(pacticipant, version, target, targetKind);
   const { summary, notices } = summarizeMatrix(toSummaryRows(matrix));
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));

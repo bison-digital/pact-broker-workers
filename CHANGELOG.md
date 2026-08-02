@@ -91,6 +91,37 @@ Publishing, verification and `for-verification` are untouched.
 - **`/matrix` accepts `environment=`**, which is what `pact_broker-client` sends
   for `--to-environment`.
 
+### Added — `pact-broker-client` command support
+
+Found by running the real CLI while checking the compatibility claim above.
+Each failed *quietly enough to look like success* from the broker's side.
+
+- **`POST /contracts/publish`**, advertised as `pb:publish-contracts`. Without
+  it `pact-broker publish` falls back to a legacy path that cannot record
+  branches at all — it prints "This version of the Pact Broker does not support
+  versions with branches or build URLs", publishes the pact anyway, and the
+  version lands with `branch: null` while the command exits 0. Accepts the
+  documented body (base64 contract content, `branch`, `buildUrl`, `tags`) and
+  returns `notices` for the CLI to render.
+- **`POST /environments`** so `create-environment` works, and `GET /environments`
+  now carries a named `pb:environments` link collection — the CLI looks
+  environments up by link name, and its absence crashed `record-deployment`
+  with `NoMethodError - undefined method 'find' for nil`.
+- **`record-deployment` support**: `pb:pacticipant-version` on the index, a
+  per-environment `pb:record-deployment` link collection on the version
+  resource, and the `POST` endpoint behind it. Previously it failed outright
+  with `Could not find relation 'pb:pacticipant-version'`.
+- **`PUT /pacticipants/{name}/versions/{version}`**, plus
+  `pb:pacticipant-branch-version` and `pb:pacticipant-version-tag` on the index.
+- An unresolved target is now described in the terms the caller used:
+  `--to-environment` naming an empty environment reports "no version is
+  currently recorded as deployed/released in this environment" rather than
+  calling it a missing tag.
+
+Verified end to end against `pactfoundation/pact-cli`: `publish --branch
+--build-url --tag`, `create-environment`, `record-deployment`, and
+`can-i-deploy --to-environment`.
+
 ### Notes
 
 Deliberate remaining gaps are listed in `BACKLOG.md` under "Reference-broker
