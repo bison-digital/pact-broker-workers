@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { req, reqJson, authHeaders, publishPact, publishVerification, tagVersion } from "./helpers";
+import {
+  req,
+  reqJson,
+  authHeaders,
+  publishPact,
+  publishVerification,
+  tagVersion,
+  ensureEnvironment,
+  recordDeployment,
+} from "./helpers";
 
 /** The subset of a matrix row these tests assert on — see matrix_decorator.rb. */
 interface MatrixRowShape {
@@ -109,6 +118,30 @@ describe("/matrix", () => {
     expect(followed.status).toBe(200);
   });
 
+  // pact_broker-client sends `environment=` for --to-environment and `tag=` for
+  // --to (matrix/query.rb#query_options); parse_query.rb accepts both.
+  it("narrows on the environment query param the reference client sends", async () => {
+    // A *different* provider version is in the environment — one that never
+    // verified this pact. Ignoring `environment=` would report the passing
+    // verification from p-1.0.0 instead.
+    await ensureEnvironment("mx-prod");
+    await req("/pacticipants/mx-p1/branches/main/versions/p-2.0.0", {
+      method: "PUT",
+      headers: authHeaders(),
+    });
+    await recordDeployment("mx-p1", "p-2.0.0", "mx-prod");
+
+    const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0&environment=mx-prod", {
+      headers: authHeaders(),
+    });
+    const summary = (body as { summary: { success: number; unknown: number; reason: string } })
+      .summary;
+
+    expect(summary.success).toBe(0);
+    expect(summary.unknown).toBe(1);
+    expect(summary.reason).toContain("currently in mx-prod (p-2.0.0)");
+  });
+
   it("response shape includes summary, matrix, _links", async () => {
     const { body } = await reqJson("/matrix?pacticipant=mx-c1&version=1.0.0", {
       headers: authHeaders(),
@@ -160,6 +193,74 @@ describe("/can-i-deploy with a mixed matrix", () => {
       failed: 1,
       unknown: 1,
     });
+  });
+});
+
+// The two reported findings compound: with no branch on the provider version a
+// branch-scoped query resolved nothing, every row came back verificationResult
+// null, and a *failed* verification was reported as *absent*. Same data, same
+// moment, two answers depending on whether `to` was passed.
+describe("/can-i-deploy narrowed to a target", () => {
+  beforeAll(async () => {
+    const { body } = await publishPact("tgt-c", "tgt-p", "1.0.0");
+    await publishVerification(
+      "tgt-p",
+      "tgt-c",
+      (body as { contentSha: string }).contentSha,
+      false,
+      "p-9.0.0",
+    );
+    await req("/pacticipants/tgt-p/branches/main/versions/p-9.0.0", {
+      method: "PUT",
+      headers: authHeaders(),
+    });
+  });
+
+  it("still reports the failure when narrowed to the provider's branch", async () => {
+    const { body } = await reqJson("/can-i-deploy?pacticipant=tgt-c&version=1.0.0&to=main", {
+      headers: authHeaders(),
+    });
+    const summary = (body as { summary: { reason: string; failed: number; deployable: unknown } })
+      .summary;
+
+    expect(summary.reason).toContain("failed");
+    expect(summary.failed).toBe(1);
+    expect(summary.deployable).toBe(false);
+  });
+
+  it("says the target matched nothing rather than calling it unverified", async () => {
+    const { body } = await reqJson("/can-i-deploy?pacticipant=tgt-c&version=1.0.0&to=nowhere", {
+      headers: authHeaders(),
+    });
+    const summary = (body as { summary: { reason: string; unknown: number; deployable: unknown } })
+      .summary;
+
+    expect(summary.reason).toContain("no such version exists");
+    expect(summary.unknown).toBe(1);
+    expect(summary.deployable).toBeNull();
+  });
+
+  it("accepts a target whose name contains a slash or a dot", async () => {
+    const { status } = await reqJson(
+      "/can-i-deploy?pacticipant=tgt-c&version=1.0.0&to=release/1.2",
+      {
+        headers: authHeaders(),
+      },
+    );
+
+    expect(status).toBe(200);
+  });
+
+  it("resolves a target that names an environment the provider is deployed to", async () => {
+    await ensureEnvironment("tgt-staging");
+    await recordDeployment("tgt-p", "p-9.0.0", "tgt-staging");
+
+    const { body } = await reqJson("/can-i-deploy?pacticipant=tgt-c&version=1.0.0&to=tgt-staging", {
+      headers: authHeaders(),
+    });
+    const summary = (body as { summary: { failed: number } }).summary;
+
+    expect(summary.failed).toBe(1);
   });
 });
 

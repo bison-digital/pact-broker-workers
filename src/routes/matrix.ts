@@ -6,8 +6,7 @@ import { decorateMatrixRow } from "../services/matrix-row";
 import {
   nameSchema,
   versionSchema,
-  tagSchema,
-  environmentNameSchema,
+  branchSchema,
   validateParam,
   validateOptionalQuery,
 } from "../lib/validation";
@@ -25,7 +24,14 @@ app.get("/matrix", async (c) => {
   // Parse query params - supports both array format and single values
   const pacticipantRaw = c.req.query("q[][pacticipant]") ?? c.req.query("pacticipant");
   const versionRaw = c.req.query("q[][version]") ?? c.req.query("version");
-  const latestTagRaw = c.req.query("q[][tag]") ?? c.req.query("tag");
+  // The reference client sends `environment=` for --to-environment and `tag=`
+  // for --to (matrix/query.rb#query_options). Both narrow the provider side, so
+  // both feed the same target resolution.
+  const targetRaw =
+    c.req.query("q[][environment]") ??
+    c.req.query("environment") ??
+    c.req.query("q[][tag]") ??
+    c.req.query("tag");
 
   if (!pacticipantRaw) {
     return c.json(
@@ -45,12 +51,12 @@ app.get("/matrix", async (c) => {
   if (!versionResult.valid) return versionResult.response;
   const version = versionResult.value;
 
-  const tagResult = validateOptionalQuery(c, tagSchema, latestTagRaw, "tag");
-  if (!tagResult.valid) return tagResult.response;
-  const latestTag = tagResult.value;
+  const targetResult = validateOptionalQuery(c, branchSchema, targetRaw, "tag");
+  if (!targetResult.valid) return targetResult.response;
+  const target = targetResult.value;
 
   const broker = getBroker(c.env);
-  const matrix = await broker.getMatrix(pacticipant, version, latestTag);
+  const matrix = await broker.getMatrix(pacticipant, version, target);
   const { summary, notices } = summarizeMatrix(toSummaryRows(matrix));
 
   const hal = new HalBuilder(getBaseUrl(c.req.raw));
@@ -88,9 +94,10 @@ app.get("/can-i-deploy", async (c) => {
   if (!versionResult.valid) return versionResult.response;
   const version = versionResult.value;
 
-  // 'to' can be either an environment name or a tag — both use the same permitted
-  // character set, so validate with environmentNameSchema if present (strictest).
-  const toResult = validateOptionalQuery(c, environmentNameSchema, toRaw, "to");
+  // 'to' names an environment, a tag or a branch and we do not know which until
+  // we try to resolve it, so validate against the most permissive of the three.
+  // environmentNameSchema would reject `release/1.2` and `1.0.0-rc` outright.
+  const toResult = validateOptionalQuery(c, branchSchema, toRaw, "to");
   if (!toResult.valid) return toResult.response;
   const toTag = toResult.value;
 

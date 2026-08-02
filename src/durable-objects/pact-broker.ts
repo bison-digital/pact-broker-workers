@@ -33,6 +33,7 @@ import type {
   PactContent,
   MatrixRowData,
   MatrixVersionData,
+  MatrixTarget,
   ConsumerVersionSelector,
   WebhookEvent,
   WebhookEventPayload,
@@ -549,6 +550,61 @@ export class PactBrokerDO extends DurableObject<Env> {
 
   // ============ Matrix / Can-I-Deploy Operations ============
 
+  /**
+   * Resolve a `to` target to a provider version.
+   *
+   * A target is a bare name — clients say `--to main` without saying what kind
+   * of thing `main` is — so try each in turn. Environment first, because a
+   * recorded deployment is the strongest statement about what is running;
+   * then tag, which is what the reference `--to` means and what this broker
+   * has always resolved; then branch.
+   */
+  async resolveProviderVersionForTarget(
+    providerName: string,
+    target: string,
+  ): Promise<{ version: Version; type: MatrixTarget["type"] } | null> {
+    const pacticipant = await this.getPacticipant(providerName);
+    if (!pacticipant) return null;
+
+    const environment = this.db
+      .select()
+      .from(environments)
+      .where(eq(environments.name, target))
+      .get();
+
+    if (environment) {
+      const deployed = this.db
+        .select({ version: versions })
+        .from(deployedVersions)
+        .innerJoin(versions, eq(deployedVersions.versionId, versions.id))
+        .where(
+          and(
+            eq(deployedVersions.environmentId, environment.id),
+            eq(versions.pacticipantId, pacticipant.id),
+            isNull(deployedVersions.undeployedAt),
+          ),
+        )
+        .orderBy(desc(deployedVersions.deployedAt))
+        .get();
+
+      if (deployed) return { version: deployed.version, type: "environment" };
+    }
+
+    const tagged = await this.getLatestVersionByTag(providerName, target);
+    if (tagged) return { version: tagged, type: "tag" };
+
+    const branched = this.db
+      .select()
+      .from(versions)
+      .where(and(eq(versions.pacticipantId, pacticipant.id), eq(versions.branch, target)))
+      .orderBy(desc(versions.createdAt))
+      .get();
+
+    if (branched) return { version: branched, type: "branch" };
+
+    return null;
+  }
+
   /** Version as a matrix row describes it: number, branch and tag names. */
   private versionSummary(version: Version): MatrixVersionData {
     const versionTags = this.db.select().from(tags).where(eq(tags.versionId, version.id)).all();
@@ -563,7 +619,7 @@ export class PactBrokerDO extends DurableObject<Env> {
   async getMatrix(
     pacticipantName: string,
     version?: string,
-    toTag?: string,
+    to?: string,
   ): Promise<MatrixRowData[]> {
     const pacticipant = await this.getPacticipant(pacticipantName);
     if (!pacticipant) return [];
@@ -598,18 +654,25 @@ export class PactBrokerDO extends DurableObject<Env> {
 
       if (!consumer || !provider) continue;
 
-      // Get latest verification for target tag if specified
+      // Narrow to the target's provider version if one was asked for. A target
+      // that names nothing is recorded as unresolved rather than left to look
+      // like an unverified pact.
       let verification: Verification | undefined;
-      if (toTag) {
-        const providerVersion = await this.getLatestVersionByTag(provider.name, toTag);
-        if (providerVersion) {
+      let target: MatrixTarget | undefined;
+      let targetVersion: Version | undefined;
+      if (to) {
+        const resolved = await this.resolveProviderVersionForTarget(provider.name, to);
+        target = { type: resolved?.type ?? "tag", value: to, resolved: resolved !== null };
+        targetVersion = resolved?.version;
+
+        if (resolved) {
           verification = this.db
             .select()
             .from(verifications)
             .where(
               and(
                 eq(verifications.pactId, pact.id),
-                eq(verifications.providerVersionId, providerVersion.id),
+                eq(verifications.providerVersionId, resolved.version.id),
               ),
             )
             .orderBy(desc(verifications.verifiedAt))
@@ -625,20 +688,24 @@ export class PactBrokerDO extends DurableObject<Env> {
       }
 
       // The provider version reported is the one that produced the
-      // verification — until something verifies the pact there isn't one.
+      // verification. When the query narrowed to a target that resolved, report
+      // that version even if it has not verified the pact — the row is about
+      // that version, and saying so is what distinguishes "this version has not
+      // verified it" from "nothing matched the target".
       const providerVersion = verification
         ? this.db
             .select()
             .from(versions)
             .where(eq(versions.id, verification.providerVersionId))
             .get()
-        : undefined;
+        : targetVersion;
 
       rows.push({
         consumer: { name: consumer.name, version: this.versionSummary(consumerVersion) },
         provider: {
           name: provider.name,
           version: providerVersion ? this.versionSummary(providerVersion) : null,
+          ...(target ? { target } : {}),
         },
         pact: { sha: pact.contentSha, createdAt: pact.createdAt },
         verification: verification

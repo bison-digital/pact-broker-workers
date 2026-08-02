@@ -98,9 +98,20 @@ export interface MatrixVersionData {
   tags: string[];
 }
 
+/**
+ * How a `to` / `tag` / `environment` narrowing was resolved for one row.
+ * `resolved: false` means the target named nothing — a different fact from
+ * "nobody has verified this yet", and reported as such.
+ */
+export interface MatrixTarget {
+  type: "tag" | "branch" | "environment";
+  value: string;
+  resolved: boolean;
+}
+
 export interface MatrixRowData {
   consumer: { name: string; version: MatrixVersionData };
-  provider: { name: string; version: MatrixVersionData | null };
+  provider: { name: string; version: MatrixVersionData | null; target?: MatrixTarget };
   pact: { sha: string; createdAt: string };
   verification: { id: number; success: boolean; verifiedAt: string } | null;
 }
