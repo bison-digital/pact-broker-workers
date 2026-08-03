@@ -32,9 +32,9 @@ jobs:
       WORKER_NAME: ${{ vars.WORKER_NAME }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -79,9 +79,9 @@ jobs:
       MUTATING_RATE_LIMIT_THRESHOLD: ${{ vars.MUTATING_RATE_LIMIT_THRESHOLD }}
       READ_RATE_LIMIT_THRESHOLD: ${{ vars.READ_RATE_LIMIT_THRESHOLD }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
