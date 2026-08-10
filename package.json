@@ -33,20 +33,20 @@
   "license": "MIT",
   "dependencies": {
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.33",
+    "hono": "^4.13.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.20.1",
-    "@cloudflare/workers-types": "^5.20260801.1",
+    "@cloudflare/vitest-pool-workers": "^0.20.2",
+    "@cloudflare/workers-types": "^5.20260804.1",
     "@types/node": "^26.1.2",
-    "oxfmt": "^0.61.0",
-    "oxlint": "^1.76.0",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
     "oxlint-tsgolint": "^7.0.2001",
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
     "vitest": "^4.1.10",
-    "wrangler": "^4.118.0"
+    "wrangler": "^4.119.0"
   },
   "engines": {
     "node": ">=22.12.0"
